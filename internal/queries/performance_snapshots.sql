@@ -24,3 +24,44 @@ SELECT
 FROM performance_snapshots ps
 JOIN campaigns c ON ps.campaign_id = c.id
 WHERE c.workspace_id = $1 AND ps.date >= $2 AND ps.date <= $3;
+
+-- name: GetDashboardTotals :one
+SELECT
+    COALESCE(SUM(ps.spend), 0)::numeric AS total_spend,
+    COALESCE(SUM(ps.impressions), 0)::bigint AS total_impressions,
+    COALESCE(SUM(ps.clicks), 0)::bigint AS total_clicks,
+    COALESCE(SUM(ps.conversions), 0)::bigint AS total_conversions,
+    COALESCE(AVG(ps.roas), 0)::numeric AS average_roas,
+    COALESCE(AVG(ps.cpc), 0)::numeric AS average_cpc
+FROM performance_snapshots ps
+JOIN campaigns c ON ps.campaign_id = c.id
+WHERE c.workspace_id = $1 AND ps.date >= $2 AND ps.date <= $3;
+
+-- name: GetDashboardDailySeries :many
+SELECT
+    ps.date AS date,
+    COALESCE(SUM(ps.spend), 0)::numeric AS spend,
+    COALESCE(SUM(ps.conversions), 0)::bigint AS conversions
+FROM performance_snapshots ps
+JOIN campaigns c ON ps.campaign_id = c.id
+WHERE c.workspace_id = $1 AND ps.date >= $2 AND ps.date <= $3
+GROUP BY ps.date
+ORDER BY ps.date;
+
+-- name: GetDashboardCampaignBreakdown :many
+SELECT
+    c.id AS campaign_id,
+    c.name AS name,
+    c.status AS status,
+    COALESCE(SUM(ps.spend), 0)::numeric AS spend,
+    COALESCE(SUM(ps.impressions), 0)::bigint AS impressions,
+    COALESCE(SUM(ps.clicks), 0)::bigint AS clicks,
+    COALESCE(SUM(ps.conversions), 0)::bigint AS conversions,
+    COALESCE(AVG(ps.roas), 0)::numeric AS average_roas,
+    COALESCE(AVG(ps.cpc), 0)::numeric AS average_cpc
+FROM campaigns c
+LEFT JOIN performance_snapshots ps
+    ON ps.campaign_id = c.id AND ps.date >= $2 AND ps.date <= $3
+WHERE c.workspace_id = $1
+GROUP BY c.id, c.name, c.status
+ORDER BY spend DESC;

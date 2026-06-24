@@ -22,15 +22,19 @@ type StreamEvent struct {
 	Done bool   `json:"done,omitempty"`
 }
 
+const defaultAnthropicBaseURL = "https://api.anthropic.com"
+
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
+	baseURL    string
 }
 
 func NewClient(apiKey string) *Client {
 	return &Client{
 		apiKey:     apiKey,
 		httpClient: &http.Client{},
+		baseURL:    defaultAnthropicBaseURL,
 	}
 }
 
@@ -56,7 +60,7 @@ func (c *Client) StreamChat(ctx context.Context, systemPrompt string, history []
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/messages", bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

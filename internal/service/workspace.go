@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/awomore/Pill4rsBE/internal/db"
 	"github.com/google/uuid"
@@ -56,8 +57,9 @@ func (s *WorkspaceService) UpdateWorkspace(ctx context.Context, userID uuid.UUID
 	}
 	if input.MonthlyBudget != nil {
 		n := new(big.Int)
-		n.SetString(*input.MonthlyBudget, 10)
-		params.MonthlyBudget = pgtype.Numeric{Int: n, Exp: 0, Valid: true}
+		if _, ok := n.SetString(strings.TrimSpace(*input.MonthlyBudget), 10); ok {
+			params.MonthlyBudget = pgtype.Numeric{Int: n, Exp: 0, Valid: true}
+		}
 	}
 	if input.PrimaryGoal != nil {
 		params.PrimaryGoal = pgtype.Text{String: *input.PrimaryGoal, Valid: true}

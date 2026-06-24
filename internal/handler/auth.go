@@ -37,6 +37,9 @@ func (h *AuthHandler) Signup(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
+	if strings.TrimSpace(req.Email) == "" || req.Password == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "email and password are required"})
+	}
 
 	result, err := h.svc.Signup(c.Request().Context(), req.Email, req.Password)
 	if err != nil {
@@ -63,6 +66,9 @@ func (h *AuthHandler) Login(c echo.Context) error {
 	var req loginRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if strings.TrimSpace(req.Email) == "" || req.Password == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "email and password are required"})
 	}
 
 	result, err := h.svc.Login(c.Request().Context(), req.Email, req.Password)

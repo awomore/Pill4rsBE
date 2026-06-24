@@ -52,6 +52,25 @@ func (h *WorkspaceHandler) PatchWorkspace(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
 
+	const maxFieldLen = 500
+	for name, v := range map[string]*string{
+		"business_name":   req.BusinessName,
+		"industry":        req.Industry,
+		"primary_goal":    req.PrimaryGoal,
+		"target_audience": req.TargetAudience,
+	} {
+		if v != nil && len(*v) > maxFieldLen {
+			return badRequest(c, name+" is too long (max 500 characters)")
+		}
+	}
+	if req.MonthlyBudget != nil {
+		normalized, ok := validWholeNonNegative(*req.MonthlyBudget)
+		if !ok {
+			return badRequest(c, "monthly_budget must be a non-negative whole number")
+		}
+		req.MonthlyBudget = &normalized
+	}
+
 	input := service.UpdateWorkspaceInput{
 		BusinessName:   req.BusinessName,
 		Industry:       req.Industry,
