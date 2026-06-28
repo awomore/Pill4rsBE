@@ -32,7 +32,8 @@ func NewAIHandler(queries *db.Queries, aiClient *ai.Client, actions *service.Act
 }
 
 type proposeCampaignRequest struct {
-	Message string `json:"message"`
+	Message      string   `json:"message"`
+	AdAccountIDs []string `json:"ad_account_ids"`
 }
 
 // ProposeCampaign turns a natural-language instruction into a campaign proposal
@@ -57,6 +58,9 @@ func (h *AIHandler) ProposeCampaign(c echo.Context) error {
 	if strings.TrimSpace(req.Message) == "" {
 		return badRequest(c, "message is required")
 	}
+	if len(req.AdAccountIDs) == 0 {
+		return badRequest(c, "ad_account_ids is required — pick which account(s) to run on")
+	}
 
 	ctx := c.Request().Context()
 	pgUID := pgtype.UUID{Bytes: uid, Valid: true}
@@ -75,16 +79,16 @@ func (h *AIHandler) ProposeCampaign(c echo.Context) error {
 	}
 
 	payload := service.CampaignProposalPayload{
-		Name:        proposed.Name,
-		Objective:   proposed.Objective,
-		DailyBudget: proposed.DailyBudget,
-		Currency:    proposed.Currency,
-		StartDate:   proposed.StartDate,
-		EndDate:     proposed.EndDate,
-		CTA:         proposed.CTA,
-		Platforms:   proposed.Platforms,
-		Targeting:   proposed.Targeting,
-		Creative:    creativeFromProposed(proposed.Creative),
+		Name:         proposed.Name,
+		Objective:    proposed.Objective,
+		DailyBudget:  proposed.DailyBudget,
+		Currency:     proposed.Currency,
+		StartDate:    proposed.StartDate,
+		EndDate:      proposed.EndDate,
+		CTA:          proposed.CTA,
+		AdAccountIDs: req.AdAccountIDs,
+		Targeting:    proposed.Targeting,
+		Creative:     creativeFromProposed(proposed.Creative),
 	}
 
 	action, err := h.actions.ProposeCreateCampaign(ctx, wid, service.ActorOma, payload)

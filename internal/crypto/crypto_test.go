@@ -89,9 +89,9 @@ func TestVerifyInvalidToken(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
-		token   string
-		secret  []byte
+		name   string
+		token  string
+		secret []byte
 	}{
 		{"garbage string", "not.a.valid.token", secret},
 		{"empty token", "", secret},

@@ -42,6 +42,12 @@ cp .env.example .env
 | `GOOGLE_CLIENT_ID` | no | Google OAuth login client ID. |
 | `GOOGLE_CLIENT_SECRET` | no | Google OAuth login client secret. |
 | `GOOGLE_REDIRECT_URI` | no | Google OAuth callback (defaults to `http://localhost:<PORT>/api/auth/google/callback`). |
+| `TIKTOK_APP_ID` | no | TikTok Business app id (enables the TikTok integration). |
+| `TIKTOK_APP_SECRET` | no | TikTok Business app secret. |
+| `TIKTOK_REDIRECT_URI` | no | TikTok OAuth callback, e.g. `http://localhost:8080/api/integrations/tiktok/callback`. |
+| `GOOGLE_ADS_DEVELOPER_TOKEN` | no | Google Ads API developer token (required to enable the Google Ads integration; reuses `GOOGLE_CLIENT_ID`/`SECRET` for OAuth). |
+| `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | no | Google Ads manager (MCC) customer id, if applicable. |
+| `GOOGLE_ADS_REDIRECT_URI` | no | Google Ads OAuth callback, e.g. `http://localhost:8080/api/integrations/google/callback`. |
 
 The server refuses to start if any required variable is missing.
 
@@ -146,16 +152,22 @@ All errors are returned as `{ "error": "message" }`. Authenticated routes requir
 | `GET` | `/api/auth/google` · `/api/auth/google/callback` | Google OAuth login. |
 | `GET` / `PATCH` | `/api/workspace` | Read / update the workspace profile. |
 | `POST` | `/api/ai/chat` | SSE chat with Oma (`mode`: `copilot` (default) or `onboarding`). |
-| `GET` | `/api/integrations` | List connected ad accounts. |
+| `GET` | `/api/integrations` | List connected ad accounts (a business can connect many, including several per platform). |
 | `GET` | `/api/integrations/meta/connect` · `/callback` | Meta OAuth connect flow. |
-| `GET` | `/api/integrations/meta/options` | List the Meta account's Facebook pages + pixels (for ad delivery). |
-| `PATCH` | `/api/integrations/meta` | Set the `page_id` / `pixel_id` used for ad delivery. |
-| `DELETE` | `/api/integrations/meta` | Disconnect Meta. |
+| `GET` | `/api/integrations/tiktok/connect` · `/callback` | TikTok OAuth connect flow. |
+| `GET` | `/api/integrations/google/connect` · `/callback` | Google Ads OAuth connect flow. |
+| `GET` | `/api/integrations/accounts/:id/options` | A Meta account's pages + pixels (for ad delivery). |
+| `PATCH` | `/api/integrations/accounts/:id` | Set a Meta account's `page_id` / `pixel_id`. |
+| `DELETE` | `/api/integrations/accounts/:id` | Disconnect a single connected ad account. |
 | `POST` | `/api/sync/trigger` | Sync campaigns + last-30-day insights (stands in for the 6h cron). |
 | `GET` | `/api/campaigns` | Campaigns with their latest snapshot. |
-| `POST` | `/api/campaigns` | Create one campaign (campaign → ad set → creative → ad, all `PAUSED`) across multiple platforms; unreachable platforms are saved as local drafts. |
+| `POST` | `/api/campaigns` | Create a campaign on the selected accounts (`ad_account_ids`); builds the full tree (campaign → ad set → creative → ad, all `PAUSED`); unreachable accounts are saved as local drafts. |
 | `POST` | `/api/campaigns/:id/launch` | Resume building a draft's full delivery tree and flip it to `PAUSED`. |
-| `POST` | `/api/ai/campaign/propose` | Oma turns a natural-language brief into a campaign **proposal** (pending action) to review. |
+| `POST` | `/api/campaigns/:id/pause` · `/resume` | Pause or resume a live campaign (platform + local). |
+| `PATCH` | `/api/campaigns/:id` | Change a campaign's daily budget. |
+| `GET` | `/api/campaigns/:id/health` | Oma's health card: what / why / recommendation (+ a one-click fix if any). |
+| `POST` | `/api/campaigns/:id/health/apply` | Apply the recommended fix (audited Oma action via the approval engine). |
+| `POST` | `/api/ai/campaign/propose` | Oma turns a brief + the picked `ad_account_ids` into a campaign **proposal** (pending action) to review. |
 | `GET` | `/api/actions` | The propose → review → approve queue (with outcomes). |
 | `POST` | `/api/actions/:id/approve` · `/reject` | Approve (executes via the shared campaign engine) or reject a proposal. |
 | `GET` | `/api/dashboard/summary?range=7d\|30d\|90d` | Aggregated performance, daily series, per-campaign breakdown. |

@@ -16,24 +16,25 @@ import (
 )
 
 type CampaignHandler struct {
-	svc *service.CampaignService
+	svc     *service.CampaignService
+	actions *service.ActionService
 }
 
-func NewCampaignHandler(svc *service.CampaignService) *CampaignHandler {
-	return &CampaignHandler{svc: svc}
+func NewCampaignHandler(svc *service.CampaignService, actions *service.ActionService) *CampaignHandler {
+	return &CampaignHandler{svc: svc, actions: actions}
 }
 
 type createCampaignRequest struct {
-	Name        string           `json:"name"`
-	Objective   string           `json:"objective"`
-	DailyBudget float64          `json:"daily_budget"`
-	Currency    string           `json:"currency"`
-	StartDate   string           `json:"start_date"`
-	EndDate     string           `json:"end_date"`
-	CTA         string           `json:"cta"`
-	Platforms   []string         `json:"platforms"`
-	Targeting   map[string]any   `json:"targeting"`
-	Creative    *creativeRequest `json:"creative"`
+	Name         string           `json:"name"`
+	Objective    string           `json:"objective"`
+	DailyBudget  float64          `json:"daily_budget"`
+	Currency     string           `json:"currency"`
+	StartDate    string           `json:"start_date"`
+	EndDate      string           `json:"end_date"`
+	CTA          string           `json:"cta"`
+	AdAccountIDs []string         `json:"ad_account_ids"`
+	Targeting    map[string]any   `json:"targeting"`
+	Creative     *creativeRequest `json:"creative"`
 }
 
 type creativeRequest struct {
@@ -81,16 +82,16 @@ func (h *CampaignHandler) Create(c echo.Context) error {
 	}
 
 	input := service.CreateCampaignInput{
-		Name:        req.Name,
-		Objective:   req.Objective,
-		DailyBudget: req.DailyBudget,
-		Currency:    req.Currency,
-		StartDate:   start,
-		EndDate:     end,
-		CTA:         req.CTA,
-		Platforms:   req.Platforms,
-		Targeting:   req.Targeting,
-		Creative:    toCreativeSpec(req.Creative),
+		Name:         req.Name,
+		Objective:    req.Objective,
+		DailyBudget:  req.DailyBudget,
+		Currency:     req.Currency,
+		StartDate:    start,
+		EndDate:      end,
+		CTA:          req.CTA,
+		AdAccountIDs: req.AdAccountIDs,
+		Targeting:    req.Targeting,
+		Creative:     toCreativeSpec(req.Creative),
 	}
 
 	result, err := h.svc.CreateCampaign(c.Request().Context(), wid, input)
@@ -209,4 +210,169 @@ func warningsOrEmpty(w []string) []string {
 		return []string{}
 	}
 	return w
+}
+
+// Pause sets a live campaign to PAUSED.
+func (h *CampaignHandler) Pause(c echo.Context) error {
+	return h.setStatus(c, service.StatusPaused)
+}
+
+// Resume sets a paused campaign back to ACTIVE.
+func (h *CampaignHandler) Resume(c echo.Context) error {
+	return h.setStatus(c, service.StatusActive)
+}
+
+func (h *CampaignHandler) setStatus(c echo.Context, status string) error {
+	ws, err := uuid.Parse(workspaceIDOf(c))
+	if err != nil {
+		return badRequest(c, "invalid workspace id")
+	}
+	cid, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return badRequest(c, "invalid campaign id")
+	}
+	camp, platform, err := h.svc.SetCampaignStatus(c.Request().Context(), ws, cid, status)
+	if err != nil {
+		return manageError(c, err)
+	}
+	return c.JSON(http.StatusOK, campaignToMap(camp, platform))
+}
+
+type updateBudgetRequest struct {
+	DailyBudget *float64 `json:"daily_budget"`
+}
+
+// UpdateBudget changes a campaign's daily budget.
+func (h *CampaignHandler) UpdateBudget(c echo.Context) error {
+	ws, err := uuid.Parse(workspaceIDOf(c))
+	if err != nil {
+		return badRequest(c, "invalid workspace id")
+	}
+	cid, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return badRequest(c, "invalid campaign id")
+	}
+	var req updateBudgetRequest
+	if err := c.Bind(&req); err != nil {
+		return badRequest(c, "invalid request body")
+	}
+	if req.DailyBudget == nil {
+		return badRequest(c, "daily_budget is required")
+	}
+	camp, platform, err := h.svc.UpdateCampaignBudget(c.Request().Context(), ws, cid, *req.DailyBudget)
+	if err != nil {
+		return manageError(c, err)
+	}
+	return c.JSON(http.StatusOK, campaignToMap(camp, platform))
+}
+
+// Health returns Oma's campaign health card (advice). The recommended fix, if
+// any, is described so the UI can offer a one-click "Apply" (POST .../health/apply).
+func (h *CampaignHandler) Health(c echo.Context) error {
+	ws, err := uuid.Parse(workspaceIDOf(c))
+	if err != nil {
+		return badRequest(c, "invalid workspace id")
+	}
+	cid, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return badRequest(c, "invalid campaign id")
+	}
+
+	assessment, _, err := h.svc.AssessHealth(c.Request().Context(), ws, cid)
+	if err != nil {
+		if errors.Is(err, service.ErrCampaignNotFound) {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "campaign not found"})
+		}
+		slog.Error("health assessment failed", "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to assess campaign health"})
+	}
+
+	resp := map[string]interface{}{
+		"status":         assessment.Status,
+		"what":           assessment.What,
+		"why":            assessment.Why,
+		"recommendation": assessment.Recommendation,
+	}
+	if assessment.Action != nil {
+		ra := map[string]interface{}{
+			"type":    assessment.Action.Type,
+			"summary": assessment.Action.Summary,
+		}
+		if assessment.Action.Status != "" {
+			ra["status"] = assessment.Action.Status
+		}
+		if assessment.Action.DailyBudget != 0 {
+			ra["daily_budget"] = assessment.Action.DailyBudget
+		}
+		resp["recommended_action"] = ra
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+// ApplyHealth executes the current recommended fix in one click: it re-derives
+// the recommendation, records it as an Oma action, and runs it through the
+// shared engine (so it's audited like any other action).
+func (h *CampaignHandler) ApplyHealth(c echo.Context) error {
+	ws, err := uuid.Parse(workspaceIDOf(c))
+	if err != nil {
+		return badRequest(c, "invalid workspace id")
+	}
+	cid, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return badRequest(c, "invalid campaign id")
+	}
+	ctx := c.Request().Context()
+
+	assessment, _, err := h.svc.AssessHealth(ctx, ws, cid)
+	if err != nil {
+		if errors.Is(err, service.ErrCampaignNotFound) {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "campaign not found"})
+		}
+		slog.Error("health assessment failed", "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to assess campaign health"})
+	}
+	if assessment.Action == nil {
+		return badRequest(c, "there is no recommended action to apply")
+	}
+
+	var action db.CampaignAction
+	switch assessment.Action.Type {
+	case service.ActionSetStatus:
+		action, err = h.actions.ProposeStatusChange(ctx, ws, service.ActorOma, cid, assessment.Action.Status)
+	case service.ActionUpdateBudget:
+		action, err = h.actions.ProposeBudgetChange(ctx, ws, service.ActorOma, cid, assessment.Action.DailyBudget)
+	default:
+		return badRequest(c, "unsupported recommended action")
+	}
+	if err != nil {
+		var ve service.ValidationError
+		if errors.As(err, &ve) {
+			return badRequest(c, ve.Msg)
+		}
+		slog.Error("propose health action failed", "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to apply recommendation"})
+	}
+
+	executed, _, err := h.actions.ApproveAction(ctx, ws, uuid.UUID(action.ID.Bytes))
+	if err != nil {
+		slog.Error("apply health action failed", "error", err)
+		return c.JSON(http.StatusBadGateway, map[string]interface{}{
+			"error":  "failed to apply recommendation",
+			"action": actionToMap(executed),
+		})
+	}
+	return c.JSON(http.StatusOK, actionToMap(executed))
+}
+
+func manageError(c echo.Context, err error) error {
+	var ve service.ValidationError
+	switch {
+	case errors.Is(err, service.ErrCampaignNotFound):
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "campaign not found"})
+	case errors.As(err, &ve):
+		return badRequest(c, ve.Msg)
+	default:
+		slog.Error("campaign management failed", "error", err)
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to apply the change on the platform"})
+	}
 }

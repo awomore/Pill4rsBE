@@ -209,3 +209,73 @@ func (c *Client) FetchPixels(ctx context.Context, accessToken, accountID string)
 	endpoint := fmt.Sprintf("%s/%s/%s/adspixels?%s", c.graphBaseURL, c.apiVersion, ensureActPrefix(accountID), params.Encode())
 	return fetchPaged[Pixel](ctx, c, endpoint)
 }
+
+var _ integrations.CampaignDataSource = (*Client)(nil)
+
+// FetchCampaigns returns the account's campaigns in the platform-agnostic shape.
+func (c *Client) FetchCampaigns(ctx context.Context, accessToken, accountID string) ([]integrations.NormalizedCampaign, error) {
+	raw, err := c.GetCampaigns(ctx, accessToken, accountID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]integrations.NormalizedCampaign, 0, len(raw))
+	for _, mc := range raw {
+		out = append(out, integrations.NormalizedCampaign{
+			ExternalID:  mc.ID,
+			Name:        mc.Name,
+			Objective:   mc.Objective,
+			Status:      mc.Status,
+			DailyBudget: minorStringToMajor(mc.DailyBudget),
+		})
+	}
+	return out, nil
+}
+
+// FetchInsights returns a campaign's daily insights, already normalized.
+func (c *Client) FetchInsights(ctx context.Context, accessToken, accountID, campaignID, since, until string) ([]integrations.NormalizedInsight, error) {
+	rows, err := c.GetInsights(ctx, accessToken, campaignID, since, until)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]integrations.NormalizedInsight, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Normalize(r))
+	}
+	return out, nil
+}
+
+type adAccountNode struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// FetchAdAccounts lists every ad account the connected user can access.
+func (c *Client) FetchAdAccounts(ctx context.Context, accessToken string) ([]integrations.Account, error) {
+	params := url.Values{}
+	params.Set("fields", "id,name")
+	params.Set("limit", "200")
+	params.Set("access_token", accessToken)
+	endpoint := fmt.Sprintf("%s/%s/me/adaccounts?%s", c.graphBaseURL, c.apiVersion, params.Encode())
+	nodes, err := fetchPaged[adAccountNode](ctx, c, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]integrations.Account, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, integrations.Account{ID: n.ID, Name: n.Name})
+	}
+	return out, nil
+}
+
+// minorStringToMajor converts Meta's minor-unit integer string to major units.
+func minorStringToMajor(s string) float64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return float64(n) / 100
+}

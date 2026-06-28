@@ -10,19 +10,26 @@ import (
 
 	"github.com/awomore/Pill4rsBE/internal/crypto"
 	"github.com/awomore/Pill4rsBE/internal/db"
-	"github.com/awomore/Pill4rsBE/internal/integrations/meta"
+	"github.com/awomore/Pill4rsBE/internal/integrations"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type SyncService struct {
 	queries *db.Queries
-	meta    *meta.Client
 	encKey  string
+	sources map[string]integrations.CampaignDataSource
 }
 
-func NewSyncService(queries *db.Queries, metaClient *meta.Client, encKey string) *SyncService {
-	return &SyncService{queries: queries, meta: metaClient, encKey: encKey}
+// NewSyncService indexes the supplied data sources by platform; sync iterates
+// every connected account and uses the matching source, so adding a platform is
+// just passing another source.
+func NewSyncService(queries *db.Queries, encKey string, sources ...integrations.CampaignDataSource) *SyncService {
+	m := make(map[string]integrations.CampaignDataSource, len(sources))
+	for _, src := range sources {
+		m[src.Platform()] = src
+	}
+	return &SyncService{queries: queries, encKey: encKey, sources: m}
 }
 
 // SyncSummary is the result of a sync run.
@@ -68,7 +75,8 @@ func (s *SyncService) SyncWorkspace(ctx context.Context, workspaceID uuid.UUID) 
 	untilStr := until.Format("2006-01-02")
 
 	for _, acct := range accounts {
-		if acct.Platform != "meta" {
+		source, ok := s.sources[acct.Platform]
+		if !ok {
 			continue
 		}
 
@@ -78,9 +86,9 @@ func (s *SyncService) SyncWorkspace(ctx context.Context, workspaceID uuid.UUID) 
 			continue
 		}
 
-		campaigns, err := s.meta.GetCampaigns(ctx, token, acct.ExternalAccountID)
+		campaigns, err := source.FetchCampaigns(ctx, token, acct.ExternalAccountID)
 		if err != nil {
-			slog.Error("sync: fetch campaigns failed", "ad_account", formatUUID(acct.ID), "error", err)
+			slog.Error("sync: fetch campaigns failed", "ad_account", formatUUID(acct.ID), "platform", acct.Platform, "error", err)
 			continue
 		}
 
@@ -88,26 +96,25 @@ func (s *SyncService) SyncWorkspace(ctx context.Context, workspaceID uuid.UUID) 
 			dbCamp, err := s.queries.UpsertCampaign(ctx, db.UpsertCampaignParams{
 				WorkspaceID:        pgWID,
 				AdAccountID:        acct.ID,
-				ExternalCampaignID: mc.ID,
+				ExternalCampaignID: mc.ExternalID,
 				Name:               mc.Name,
 				Objective:          textOrNull(mc.Objective),
 				Status:             mc.Status,
-				DailyBudget:        budgetToNumeric(mc.DailyBudget),
+				DailyBudget:        numericFromFloat(mc.DailyBudget),
 			})
 			if err != nil {
-				slog.Error("sync: upsert campaign failed", "campaign", mc.ID, "error", err)
+				slog.Error("sync: upsert campaign failed", "campaign", mc.ExternalID, "error", err)
 				continue
 			}
 			summary.Campaigns++
 
-			rows, err := s.meta.GetInsights(ctx, token, mc.ID, sinceStr, untilStr)
+			insights, err := source.FetchInsights(ctx, token, acct.ExternalAccountID, mc.ExternalID, sinceStr, untilStr)
 			if err != nil {
-				slog.Error("sync: fetch insights failed", "campaign", mc.ID, "error", err)
+				slog.Error("sync: fetch insights failed", "campaign", mc.ExternalID, "error", err)
 				continue
 			}
 
-			for _, raw := range rows {
-				ni := meta.Normalize(raw)
+			for _, ni := range insights {
 				if ni.Date.IsZero() {
 					continue
 				}
@@ -126,7 +133,7 @@ func (s *SyncService) SyncWorkspace(ctx context.Context, workspaceID uuid.UUID) 
 					Currency:    ni.Currency,
 				})
 				if err != nil {
-					slog.Error("sync: upsert snapshot failed", "campaign", mc.ID, "date", ni.Date, "error", err)
+					slog.Error("sync: upsert snapshot failed", "campaign", mc.ExternalID, "date", ni.Date, "error", err)
 					continue
 				}
 				summary.Snapshots++

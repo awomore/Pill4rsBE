@@ -46,9 +46,6 @@ func TestProposeCampaign(t *testing.T) {
 	if pc.Name != "Summer Sale" || pc.Objective != "sales" || pc.DailyBudget != 5000 {
 		t.Errorf("unexpected campaign: %+v", pc)
 	}
-	if len(pc.Platforms) != 1 || pc.Platforms[0] != "meta" {
-		t.Errorf("platforms: %+v", pc.Platforms)
-	}
 	if pc.Creative == nil || pc.Creative.LinkURL != "https://shop.example.com" || pc.Creative.ImageURL == "" {
 		t.Errorf("creative: %+v", pc.Creative)
 	}

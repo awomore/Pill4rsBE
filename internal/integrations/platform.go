@@ -11,6 +11,13 @@ type Token struct {
 	ExpiresAt   time.Time
 }
 
+// Account is a single ad account accessible to a connected OAuth identity. A
+// business may have several per platform; they're all stored on connect.
+type Account struct {
+	ID   string
+	Name string
+}
+
 // NormalizedInsight is the platform-agnostic shape that every ad platform's raw
 // daily insight is mapped into before being persisted as a performance snapshot.
 // One NormalizedInsight represents one campaign on one day.
@@ -123,4 +130,40 @@ type CampaignCreator interface {
 	// whose ID is already present in `have` is skipped. It returns the best-known
 	// state even on error, so the caller can persist partial progress and resume.
 	EnsureDeliverable(ctx context.Context, accessToken string, account PlatformAccount, spec CampaignSpec, have DeliverableState) (DeliverableState, error)
+}
+
+// CampaignManager mutates already-created campaigns (pause/resume, budget). Kept
+// separate so the orchestration loop stays the same for every platform.
+type CampaignManager interface {
+	Platform() string
+
+	// SetStatus flips a campaign between ACTIVE and PAUSED on the platform.
+	SetStatus(ctx context.Context, accessToken, accountID, externalCampaignID, status string) error
+
+	// UpdateAdSetBudget sets the daily budget (major currency units) on an ad set.
+	UpdateAdSetBudget(ctx context.Context, accessToken, accountID, externalAdSetID string, dailyBudget float64) error
+}
+
+// CampaignAdapter is the full per-platform contract: create + manage. A single
+// adapter (e.g. *meta.Client) satisfies it, and TikTok/Google plug in the same way.
+type CampaignAdapter interface {
+	CampaignCreator
+	CampaignManager
+}
+
+// NormalizedCampaign is a platform-agnostic campaign as read back during sync.
+type NormalizedCampaign struct {
+	ExternalID  string
+	Name        string
+	Objective   string
+	Status      string
+	DailyBudget float64
+}
+
+// CampaignDataSource reads a platform's campaigns and insights for syncing into
+// the common snapshot shape. Every platform implements it the same way.
+type CampaignDataSource interface {
+	Platform() string
+	FetchCampaigns(ctx context.Context, accessToken, accountID string) ([]NormalizedCampaign, error)
+	FetchInsights(ctx context.Context, accessToken, accountID, campaignID, since, until string) ([]NormalizedInsight, error)
 }

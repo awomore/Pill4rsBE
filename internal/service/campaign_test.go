@@ -11,11 +11,11 @@ import (
 
 func validInput() CreateCampaignInput {
 	return CreateCampaignInput{
-		Name:        "Summer Launch",
-		Objective:   "sales",
-		DailyBudget: 100,
-		Currency:    "NGN",
-		Platforms:   []string{"meta"},
+		Name:         "Summer Launch",
+		Objective:    "sales",
+		DailyBudget:  100,
+		Currency:     "NGN",
+		AdAccountIDs: []string{"11111111-1111-1111-1111-111111111111"},
 		Creative: &integrations.CreativeSpec{
 			PrimaryText: "Shop our summer sale",
 			LinkURL:     "https://example.com/sale",
@@ -36,7 +36,8 @@ func TestValidateCreateInput(t *testing.T) {
 		{"bad objective", func(in *CreateCampaignInput) { in.Objective = "growth" }, true},
 		{"budget too low", func(in *CreateCampaignInput) { in.DailyBudget = 0 }, true},
 		{"budget too high", func(in *CreateCampaignInput) { in.DailyBudget = MaxDailyBudget + 1 }, true},
-		{"no platforms", func(in *CreateCampaignInput) { in.Platforms = nil }, true},
+		{"no ad accounts", func(in *CreateCampaignInput) { in.AdAccountIDs = nil }, true},
+		{"invalid ad account id", func(in *CreateCampaignInput) { in.AdAccountIDs = []string{"not-a-uuid"} }, true},
 		{"end before start", func(in *CreateCampaignInput) {
 			in.StartDate = time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
 			in.EndDate = time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)

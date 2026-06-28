@@ -16,7 +16,9 @@ import (
 	"github.com/awomore/Pill4rsBE/internal/config"
 	"github.com/awomore/Pill4rsBE/internal/db"
 	"github.com/awomore/Pill4rsBE/internal/handler"
+	"github.com/awomore/Pill4rsBE/internal/integrations/google"
 	"github.com/awomore/Pill4rsBE/internal/integrations/meta"
+	"github.com/awomore/Pill4rsBE/internal/integrations/tiktok"
 	"github.com/awomore/Pill4rsBE/internal/middleware"
 	"github.com/awomore/Pill4rsBE/internal/service"
 	"github.com/golang-migrate/migrate/v4"
@@ -63,13 +65,15 @@ func main() {
 	workspaceHandler := handler.NewWorkspaceHandler(workspaceService)
 	aiClient := ai.NewClient(cfg.AnthropicAPIKey)
 	metaClient := meta.NewClient(cfg.MetaAppID, cfg.MetaAppSecret, cfg.MetaRedirectURI)
-	integrationsHandler := handler.NewIntegrationsHandler(queries, cfg, metaClient)
-	syncService := service.NewSyncService(queries, metaClient, cfg.TokenEncryptionKey)
+	tiktokClient := tiktok.NewClient(cfg.TikTokAppID, cfg.TikTokAppSecret, cfg.TikTokRedirectURI)
+	googleClient := google.NewClient(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleAdsRedirectURI, cfg.GoogleAdsDeveloperToken, cfg.GoogleAdsLoginCustomerID)
+	integrationsHandler := handler.NewIntegrationsHandler(queries, cfg, metaClient, tiktokClient, googleClient)
+	syncService := service.NewSyncService(queries, cfg.TokenEncryptionKey, metaClient, tiktokClient, googleClient)
 	syncHandler := handler.NewSyncHandler(queries, syncService)
 	dashboardHandler := handler.NewDashboardHandler(queries)
-	campaignService := service.NewCampaignService(queries, cfg.TokenEncryptionKey, metaClient)
-	campaignHandler := handler.NewCampaignHandler(campaignService)
+	campaignService := service.NewCampaignService(queries, cfg.TokenEncryptionKey, metaClient, tiktokClient, googleClient)
 	actionService := service.NewActionService(queries, campaignService)
+	campaignHandler := handler.NewCampaignHandler(campaignService, actionService)
 	actionHandler := handler.NewActionHandler(actionService)
 	aiHandler := handler.NewAIHandler(queries, aiClient, actionService)
 
@@ -103,9 +107,14 @@ func main() {
 	e.GET("/api/integrations", integrationsHandler.List)
 	e.GET("/api/integrations/meta/connect", integrationsHandler.MetaConnect)
 	e.GET("/api/integrations/meta/callback", integrationsHandler.MetaCallback)
-	e.GET("/api/integrations/meta/options", integrationsHandler.MetaOptions)
-	e.PATCH("/api/integrations/meta", integrationsHandler.MetaConfigure)
-	e.DELETE("/api/integrations/meta", integrationsHandler.MetaDisconnect)
+	e.GET("/api/integrations/tiktok/connect", integrationsHandler.TikTokConnect)
+	e.GET("/api/integrations/tiktok/callback", integrationsHandler.TikTokCallback)
+	e.GET("/api/integrations/google/connect", integrationsHandler.GoogleConnect)
+	e.GET("/api/integrations/google/callback", integrationsHandler.GoogleCallback)
+	// Per-account management (a business may have many accounts per platform).
+	e.GET("/api/integrations/accounts/:id/options", integrationsHandler.AccountOptions)
+	e.PATCH("/api/integrations/accounts/:id", integrationsHandler.AccountConfigure)
+	e.DELETE("/api/integrations/accounts/:id", integrationsHandler.Disconnect)
 
 	// POST /api/sync/trigger runs SyncWorkspace synchronously. A 6-hour
 	// cron/worker would call service.SyncService.SyncWorkspace the same way.
@@ -117,6 +126,13 @@ func main() {
 	// Unified multi-platform create + decoupled launch.
 	e.POST("/api/campaigns", campaignHandler.Create)
 	e.POST("/api/campaigns/:id/launch", campaignHandler.Launch)
+
+	// Operate: pause/resume/budget + Oma health card with one-click apply.
+	e.POST("/api/campaigns/:id/pause", campaignHandler.Pause)
+	e.POST("/api/campaigns/:id/resume", campaignHandler.Resume)
+	e.PATCH("/api/campaigns/:id", campaignHandler.UpdateBudget)
+	e.GET("/api/campaigns/:id/health", campaignHandler.Health)
+	e.POST("/api/campaigns/:id/health/apply", campaignHandler.ApplyHealth)
 
 	// Oma co-pilot: propose -> review -> approve/reject.
 	e.POST("/api/ai/campaign/propose", aiHandler.ProposeCampaign)

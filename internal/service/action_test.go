@@ -8,15 +8,15 @@ import (
 
 func validPayload() CampaignProposalPayload {
 	return CampaignProposalPayload{
-		Name:        "Summer Sale",
-		Objective:   "sales",
-		DailyBudget: 5000,
-		Currency:    "NGN",
-		StartDate:   "2026-07-01",
-		EndDate:     "2026-07-31",
-		CTA:         "SHOP_NOW",
-		Platforms:   []string{"meta"},
-		Targeting:   map[string]any{"geo": []any{"NG"}},
+		Name:         "Summer Sale",
+		Objective:    "sales",
+		DailyBudget:  5000,
+		Currency:     "NGN",
+		StartDate:    "2026-07-01",
+		EndDate:      "2026-07-31",
+		CTA:          "SHOP_NOW",
+		AdAccountIDs: []string{"11111111-1111-1111-1111-111111111111"},
+		Targeting:    map[string]any{"geo": []any{"NG"}},
 		Creative: &integrations.CreativeSpec{
 			PrimaryText: "Big summer sale",
 			Headline:    "50% off",

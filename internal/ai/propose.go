@@ -27,7 +27,6 @@ type ProposedCampaign struct {
 	StartDate   string            `json:"start_date"`
 	EndDate     string            `json:"end_date"`
 	CTA         string            `json:"cta"`
-	Platforms   []string          `json:"platforms"`
 	Targeting   map[string]any    `json:"targeting"`
 	Creative    *ProposedCreative `json:"creative"`
 }
@@ -112,10 +111,6 @@ func campaignToolSchema() map[string]any {
 			"start_date":   map[string]any{"type": "string", "description": "YYYY-MM-DD, optional"},
 			"end_date":     map[string]any{"type": "string", "description": "YYYY-MM-DD, optional"},
 			"cta":          map[string]any{"type": "string", "description": "e.g. SHOP_NOW, LEARN_MORE, SIGN_UP"},
-			"platforms": map[string]any{
-				"type":  "array",
-				"items": map[string]any{"type": "string"},
-			},
 			"targeting": map[string]any{
 				"type":        "object",
 				"description": "geo (array of ISO country codes), age_min, age_max",
@@ -131,6 +126,6 @@ func campaignToolSchema() map[string]any {
 				},
 			},
 		},
-		"required": []string{"name", "objective", "daily_budget", "platforms", "creative"},
+		"required": []string{"name", "objective", "daily_budget", "creative"},
 	}
 }

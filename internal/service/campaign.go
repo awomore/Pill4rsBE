@@ -49,13 +49,13 @@ func (e ValidationError) Error() string { return e.Msg }
 type CampaignService struct {
 	queries  *db.Queries
 	encKey   string
-	adapters map[string]integrations.CampaignCreator
+	adapters map[string]integrations.CampaignAdapter
 }
 
 // NewCampaignService indexes the supplied adapters by platform. Adding a new
 // platform is just passing another adapter — the orchestration never changes.
-func NewCampaignService(queries *db.Queries, encKey string, adapters ...integrations.CampaignCreator) *CampaignService {
-	m := make(map[string]integrations.CampaignCreator, len(adapters))
+func NewCampaignService(queries *db.Queries, encKey string, adapters ...integrations.CampaignAdapter) *CampaignService {
+	m := make(map[string]integrations.CampaignAdapter, len(adapters))
 	for _, a := range adapters {
 		m[a.Platform()] = a
 	}
@@ -64,16 +64,16 @@ func NewCampaignService(queries *db.Queries, encKey string, adapters ...integrat
 
 // CreateCampaignInput is the single user intent fanned out across platforms.
 type CreateCampaignInput struct {
-	Name        string
-	Objective   string
-	DailyBudget float64
-	Currency    string
-	StartDate   time.Time
-	EndDate     time.Time
-	CTA         string
-	Platforms   []string
-	Targeting   map[string]any
-	Creative    *integrations.CreativeSpec
+	Name         string
+	Objective    string
+	DailyBudget  float64
+	Currency     string
+	StartDate    time.Time
+	EndDate      time.Time
+	CTA          string
+	AdAccountIDs []string
+	Targeting    map[string]any
+	Creative     *integrations.CreativeSpec
 }
 
 // CreatedCampaignResult is one persisted campaign plus the platform it targets.
@@ -103,8 +103,13 @@ func ValidateCreateInput(in CreateCampaignInput) error {
 	if in.DailyBudget < MinDailyBudget || in.DailyBudget > MaxDailyBudget {
 		return ValidationError{fmt.Sprintf("daily_budget must be between %.0f and %.0f", MinDailyBudget, MaxDailyBudget)}
 	}
-	if len(in.Platforms) == 0 {
-		return ValidationError{"at least one platform is required"}
+	if len(in.AdAccountIDs) == 0 {
+		return ValidationError{"at least one ad account is required"}
+	}
+	for _, id := range in.AdAccountIDs {
+		if _, err := uuid.Parse(strings.TrimSpace(id)); err != nil {
+			return ValidationError{"ad_account_ids must be valid account ids"}
+		}
 	}
 	if !in.StartDate.IsZero() && !in.EndDate.IsZero() && in.EndDate.Before(in.StartDate) {
 		return ValidationError{"end_date must not be before start_date"}
@@ -139,9 +144,9 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 	if err != nil {
 		return CreateResult{}, fmt.Errorf("load ad accounts: %w", err)
 	}
-	byPlatform := make(map[string]db.AdAccount, len(accounts))
+	byID := make(map[string]db.AdAccount, len(accounts))
 	for _, a := range accounts {
-		byPlatform[a.Platform] = a
+		byID[formatUUID(a.ID)] = a
 	}
 
 	spec := integrations.CampaignSpec{
@@ -159,15 +164,15 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 	creativeJSON := marshalCreative(in.Creative)
 
 	var result CreateResult
-	for _, platform := range dedupe(in.Platforms) {
-		adapter, ok := s.adapters[platform]
+	for _, accountID := range dedupe(in.AdAccountIDs) {
+		account, ok := byID[accountID]
 		if !ok {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s is not a supported platform; skipped", platform))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("ad account %s is not connected to this workspace; skipped", accountID))
 			continue
 		}
-		account, ok := byPlatform[platform]
+		adapter, ok := s.adapters[account.Platform]
 		if !ok {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s is not connected; skipped", platform))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s is not a supported platform; skipped", account.Platform))
 			continue
 		}
 
@@ -179,8 +184,8 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 			if externalID == "" {
 				externalID = newPlaceholderID()
 			}
-			slog.Warn("campaign delivery failed; saving draft", "platform", platform, "error", attemptErr)
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: could not fully create remotely (%v); saved as draft", platform, attemptErr))
+			slog.Warn("campaign delivery failed; saving draft", "platform", account.Platform, "error", attemptErr)
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: could not fully create remotely (%v); saved as draft", account.Platform, attemptErr))
 		}
 
 		row, err := s.queries.CreateCampaign(ctx, db.CreateCampaignParams{
@@ -201,11 +206,11 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 			Creative:           creativeJSON,
 		})
 		if err != nil {
-			slog.Error("failed to persist campaign", "platform", platform, "error", err)
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: failed to save campaign", platform))
+			slog.Error("failed to persist campaign", "platform", account.Platform, "error", err)
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: failed to save campaign", account.Platform))
 			continue
 		}
-		result.Created = append(result.Created, CreatedCampaignResult{Campaign: row, Platform: platform})
+		result.Created = append(result.Created, CreatedCampaignResult{Campaign: row, Platform: account.Platform})
 	}
 
 	if len(result.Created) == 0 {
@@ -292,6 +297,100 @@ func (s *CampaignService) LaunchCampaign(ctx context.Context, workspaceID, campa
 	})
 	if err != nil {
 		return db.Campaign{}, "", fmt.Errorf("persist launch: %w", err)
+	}
+	return updated, account.Platform, nil
+}
+
+// SetCampaignStatus pauses or resumes a live campaign (and persists the status).
+func (s *CampaignService) SetCampaignStatus(ctx context.Context, workspaceID, campaignID uuid.UUID, status string) (db.Campaign, string, error) {
+	if status != StatusActive && status != StatusPaused {
+		return db.Campaign{}, "", ValidationError{"status must be ACTIVE or PAUSED"}
+	}
+
+	camp, err := s.queries.GetCampaignByIDForWorkspace(ctx, db.GetCampaignByIDForWorkspaceParams{
+		ID:          pgtype.UUID{Bytes: campaignID, Valid: true},
+		WorkspaceID: pgtype.UUID{Bytes: workspaceID, Valid: true},
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.Campaign{}, "", ErrCampaignNotFound
+		}
+		return db.Campaign{}, "", fmt.Errorf("load campaign: %w", err)
+	}
+	if camp.Status == StatusDraft {
+		return db.Campaign{}, "", ValidationError{"launch the campaign before changing its status"}
+	}
+
+	account, err := s.queries.GetAdAccountByID(ctx, camp.AdAccountID)
+	if err != nil {
+		return db.Campaign{}, "", ValidationError{"the campaign's ad account no longer exists"}
+	}
+	adapter, ok := s.adapters[account.Platform]
+	if !ok {
+		return db.Campaign{}, "", ValidationError{fmt.Sprintf("%s is no longer a supported platform", account.Platform)}
+	}
+
+	token, err := crypto.DecryptToken(account.AccessTokenEncrypted, s.encKey)
+	if err != nil {
+		return db.Campaign{}, "", fmt.Errorf("decrypt token: %w", err)
+	}
+	if err := adapter.SetStatus(ctx, token, account.ExternalAccountID, camp.ExternalCampaignID, status); err != nil {
+		return db.Campaign{}, "", fmt.Errorf("set status on %s: %w", account.Platform, err)
+	}
+
+	updated, err := s.queries.UpdateCampaignStatus(ctx, db.UpdateCampaignStatusParams{
+		ID:     pgtype.UUID{Bytes: campaignID, Valid: true},
+		Status: status,
+	})
+	if err != nil {
+		return db.Campaign{}, "", fmt.Errorf("persist status: %w", err)
+	}
+	return updated, account.Platform, nil
+}
+
+// UpdateCampaignBudget changes a campaign's daily budget (on the platform's ad
+// set when it's live, and always in the local record).
+func (s *CampaignService) UpdateCampaignBudget(ctx context.Context, workspaceID, campaignID uuid.UUID, dailyBudget float64) (db.Campaign, string, error) {
+	if dailyBudget < MinDailyBudget || dailyBudget > MaxDailyBudget {
+		return db.Campaign{}, "", ValidationError{fmt.Sprintf("daily_budget must be between %.0f and %.0f", MinDailyBudget, MaxDailyBudget)}
+	}
+
+	camp, err := s.queries.GetCampaignByIDForWorkspace(ctx, db.GetCampaignByIDForWorkspaceParams{
+		ID:          pgtype.UUID{Bytes: campaignID, Valid: true},
+		WorkspaceID: pgtype.UUID{Bytes: workspaceID, Valid: true},
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.Campaign{}, "", ErrCampaignNotFound
+		}
+		return db.Campaign{}, "", fmt.Errorf("load campaign: %w", err)
+	}
+
+	account, err := s.queries.GetAdAccountByID(ctx, camp.AdAccountID)
+	if err != nil {
+		return db.Campaign{}, "", ValidationError{"the campaign's ad account no longer exists"}
+	}
+	adapter, ok := s.adapters[account.Platform]
+	if !ok {
+		return db.Campaign{}, "", ValidationError{fmt.Sprintf("%s is no longer a supported platform", account.Platform)}
+	}
+
+	if camp.Status != StatusDraft && camp.ExternalAdsetID.Valid {
+		token, err := crypto.DecryptToken(account.AccessTokenEncrypted, s.encKey)
+		if err != nil {
+			return db.Campaign{}, "", fmt.Errorf("decrypt token: %w", err)
+		}
+		if err := adapter.UpdateAdSetBudget(ctx, token, account.ExternalAccountID, camp.ExternalAdsetID.String, dailyBudget); err != nil {
+			return db.Campaign{}, "", fmt.Errorf("update budget on %s: %w", account.Platform, err)
+		}
+	}
+
+	updated, err := s.queries.UpdateCampaignDailyBudget(ctx, db.UpdateCampaignDailyBudgetParams{
+		ID:          pgtype.UUID{Bytes: campaignID, Valid: true},
+		DailyBudget: numericFromFloat(dailyBudget),
+	})
+	if err != nil {
+		return db.Campaign{}, "", fmt.Errorf("persist budget: %w", err)
 	}
 	return updated, account.Platform, nil
 }

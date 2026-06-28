@@ -36,3 +36,11 @@ UPDATE campaigns
 SET external_campaign_id = $2, external_adset_id = $3, external_creative_id = $4, external_ad_id = $5, status = $6, updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- name: UpdateCampaignStatus :one
+UPDATE campaigns SET status = $2, updated_at = now() WHERE id = $1
+RETURNING *;
+
+-- name: UpdateCampaignDailyBudget :one
+UPDATE campaigns SET daily_budget = $2, updated_at = now() WHERE id = $1
+RETURNING *;

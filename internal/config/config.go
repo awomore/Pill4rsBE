@@ -8,38 +8,50 @@ import (
 )
 
 type Config struct {
-	DatabaseURL        string
-	JWTSecret          string
-	AnthropicAPIKey    string
-	MetaAppID          string
-	MetaAppSecret      string
-	MetaRedirectURI    string
-	TokenEncryptionKey string
-	FrontendOrigin     string
-	Port               string
-	GoogleClientID     string
-	GoogleClientSecret string
-	GoogleRedirectURI  string
-	RedisURL           string
+	DatabaseURL              string
+	JWTSecret                string
+	AnthropicAPIKey          string
+	MetaAppID                string
+	MetaAppSecret            string
+	MetaRedirectURI          string
+	TokenEncryptionKey       string
+	FrontendOrigin           string
+	Port                     string
+	GoogleClientID           string
+	GoogleClientSecret       string
+	GoogleRedirectURI        string
+	TikTokAppID              string
+	TikTokAppSecret          string
+	TikTokRedirectURI        string
+	GoogleAdsDeveloperToken  string
+	GoogleAdsLoginCustomerID string
+	GoogleAdsRedirectURI     string
+	RedisURL                 string
 }
 
 func Load() (*Config, error) {
 	godotenv.Load()
 
 	cfg := &Config{
-		DatabaseURL:        os.Getenv("DATABASE_URL"),
-		JWTSecret:          os.Getenv("JWT_SECRET"),
-		AnthropicAPIKey:    os.Getenv("ANTHROPIC_API_KEY"),
-		MetaAppID:          os.Getenv("META_APP_ID"),
-		MetaAppSecret:      os.Getenv("META_APP_SECRET"),
-		MetaRedirectURI:    os.Getenv("META_REDIRECT_URI"),
-		TokenEncryptionKey: os.Getenv("TOKEN_ENCRYPTION_KEY"),
-		FrontendOrigin:     os.Getenv("FRONTEND_ORIGIN"),
-		Port:               os.Getenv("PORT"),
-		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-		GoogleRedirectURI:  os.Getenv("GOOGLE_REDIRECT_URI"),
-		RedisURL:           os.Getenv("REDIS_URL"),
+		DatabaseURL:              os.Getenv("DATABASE_URL"),
+		JWTSecret:                os.Getenv("JWT_SECRET"),
+		AnthropicAPIKey:          os.Getenv("ANTHROPIC_API_KEY"),
+		MetaAppID:                os.Getenv("META_APP_ID"),
+		MetaAppSecret:            os.Getenv("META_APP_SECRET"),
+		MetaRedirectURI:          os.Getenv("META_REDIRECT_URI"),
+		TokenEncryptionKey:       os.Getenv("TOKEN_ENCRYPTION_KEY"),
+		FrontendOrigin:           os.Getenv("FRONTEND_ORIGIN"),
+		Port:                     os.Getenv("PORT"),
+		GoogleClientID:           os.Getenv("GOOGLE_CLIENT_ID"),
+		GoogleClientSecret:       os.Getenv("GOOGLE_CLIENT_SECRET"),
+		GoogleRedirectURI:        os.Getenv("GOOGLE_REDIRECT_URI"),
+		TikTokAppID:              os.Getenv("TIKTOK_APP_ID"),
+		TikTokAppSecret:          os.Getenv("TIKTOK_APP_SECRET"),
+		TikTokRedirectURI:        os.Getenv("TIKTOK_REDIRECT_URI"),
+		GoogleAdsDeveloperToken:  os.Getenv("GOOGLE_ADS_DEVELOPER_TOKEN"),
+		GoogleAdsLoginCustomerID: os.Getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID"),
+		GoogleAdsRedirectURI:     os.Getenv("GOOGLE_ADS_REDIRECT_URI"),
+		RedisURL:                 os.Getenv("REDIS_URL"),
 	}
 
 	missing := []string{}

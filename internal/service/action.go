@@ -22,6 +22,8 @@ const (
 
 	// Action types (open-ended; modify/optimize plug in here later).
 	ActionCreateCampaign = "create_campaign"
+	ActionSetStatus      = "set_status"
+	ActionUpdateBudget   = "update_budget"
 
 	// Action lifecycle.
 	ActionStatusProposed = "proposed"
@@ -48,16 +50,16 @@ func NewActionService(queries *db.Queries, campaigns *CampaignService) *ActionSe
 // mirrors the create-campaign request shape (string dates) so the UI can render
 // and edit it before approval.
 type CampaignProposalPayload struct {
-	Name        string                     `json:"name"`
-	Objective   string                     `json:"objective"`
-	DailyBudget float64                    `json:"daily_budget"`
-	Currency    string                     `json:"currency"`
-	StartDate   string                     `json:"start_date"`
-	EndDate     string                     `json:"end_date"`
-	CTA         string                     `json:"cta"`
-	Platforms   []string                   `json:"platforms"`
-	Targeting   map[string]any             `json:"targeting"`
-	Creative    *integrations.CreativeSpec `json:"creative"`
+	Name         string                     `json:"name"`
+	Objective    string                     `json:"objective"`
+	DailyBudget  float64                    `json:"daily_budget"`
+	Currency     string                     `json:"currency"`
+	StartDate    string                     `json:"start_date"`
+	EndDate      string                     `json:"end_date"`
+	CTA          string                     `json:"cta"`
+	AdAccountIDs []string                   `json:"ad_account_ids"`
+	Targeting    map[string]any             `json:"targeting"`
+	Creative     *integrations.CreativeSpec `json:"creative"`
 }
 
 func (p CampaignProposalPayload) toInput() (CreateCampaignInput, error) {
@@ -70,16 +72,16 @@ func (p CampaignProposalPayload) toInput() (CreateCampaignInput, error) {
 		return CreateCampaignInput{}, ValidationError{"end_date must be in YYYY-MM-DD format"}
 	}
 	return CreateCampaignInput{
-		Name:        p.Name,
-		Objective:   p.Objective,
-		DailyBudget: p.DailyBudget,
-		Currency:    p.Currency,
-		StartDate:   start,
-		EndDate:     end,
-		CTA:         p.CTA,
-		Platforms:   p.Platforms,
-		Targeting:   p.Targeting,
-		Creative:    p.Creative,
+		Name:         p.Name,
+		Objective:    p.Objective,
+		DailyBudget:  p.DailyBudget,
+		Currency:     p.Currency,
+		StartDate:    start,
+		EndDate:      end,
+		CTA:          p.CTA,
+		AdAccountIDs: p.AdAccountIDs,
+		Targeting:    p.Targeting,
+		Creative:     p.Creative,
 	}, nil
 }
 
@@ -103,6 +105,52 @@ func (s *ActionService) ProposeCreateCampaign(ctx context.Context, workspaceID u
 		WorkspaceID: pgtype.UUID{Bytes: workspaceID, Valid: true},
 		Actor:       actor,
 		Type:        ActionCreateCampaign,
+		Payload:     raw,
+	})
+}
+
+// StatusChangePayload is the proposal payload for a set_status action.
+type StatusChangePayload struct {
+	CampaignID string `json:"campaign_id"`
+	Status     string `json:"status"`
+}
+
+// BudgetChangePayload is the proposal payload for an update_budget action.
+type BudgetChangePayload struct {
+	CampaignID  string  `json:"campaign_id"`
+	DailyBudget float64 `json:"daily_budget"`
+}
+
+// ProposeStatusChange queues a pause/resume for review.
+func (s *ActionService) ProposeStatusChange(ctx context.Context, workspaceID uuid.UUID, actor string, campaignID uuid.UUID, status string) (db.CampaignAction, error) {
+	if status != StatusActive && status != StatusPaused {
+		return db.CampaignAction{}, ValidationError{"status must be ACTIVE or PAUSED"}
+	}
+	raw, err := json.Marshal(StatusChangePayload{CampaignID: campaignID.String(), Status: status})
+	if err != nil {
+		return db.CampaignAction{}, fmt.Errorf("marshal payload: %w", err)
+	}
+	return s.queries.CreateCampaignAction(ctx, db.CreateCampaignActionParams{
+		WorkspaceID: pgtype.UUID{Bytes: workspaceID, Valid: true},
+		Actor:       actor,
+		Type:        ActionSetStatus,
+		Payload:     raw,
+	})
+}
+
+// ProposeBudgetChange queues a budget change for review.
+func (s *ActionService) ProposeBudgetChange(ctx context.Context, workspaceID uuid.UUID, actor string, campaignID uuid.UUID, dailyBudget float64) (db.CampaignAction, error) {
+	if dailyBudget < MinDailyBudget || dailyBudget > MaxDailyBudget {
+		return db.CampaignAction{}, ValidationError{fmt.Sprintf("daily_budget must be between %.0f and %.0f", MinDailyBudget, MaxDailyBudget)}
+	}
+	raw, err := json.Marshal(BudgetChangePayload{CampaignID: campaignID.String(), DailyBudget: dailyBudget})
+	if err != nil {
+		return db.CampaignAction{}, fmt.Errorf("marshal payload: %w", err)
+	}
+	return s.queries.CreateCampaignAction(ctx, db.CreateCampaignActionParams{
+		WorkspaceID: pgtype.UUID{Bytes: workspaceID, Valid: true},
+		Actor:       actor,
+		Type:        ActionUpdateBudget,
 		Payload:     raw,
 	})
 }
@@ -153,6 +201,53 @@ func (s *ActionService) ApproveAction(ctx context.Context, workspaceID, actionID
 			return db.CampaignAction{}, &res, fmt.Errorf("persist action result: %w", uerr)
 		}
 		return updated, &res, nil
+
+	case ActionSetStatus:
+		var payload StatusChangePayload
+		if err := json.Unmarshal(action.Payload, &payload); err != nil {
+			return s.fail(ctx, action, fmt.Sprintf("invalid stored payload: %v", err))
+		}
+		cid, err := uuid.Parse(payload.CampaignID)
+		if err != nil {
+			return s.fail(ctx, action, "invalid campaign id in payload")
+		}
+		camp, platform, err := s.campaigns.SetCampaignStatus(ctx, workspaceID, cid, payload.Status)
+		if err != nil {
+			return s.fail(ctx, action, err.Error())
+		}
+		updated, uerr := s.queries.UpdateCampaignActionResult(ctx, db.UpdateCampaignActionResultParams{
+			ID:     action.ID,
+			Status: ActionStatusExecuted,
+			Result: marshalCampaignResult(camp, platform),
+		})
+		if uerr != nil {
+			return db.CampaignAction{}, nil, fmt.Errorf("persist action result: %w", uerr)
+		}
+		return updated, nil, nil
+
+	case ActionUpdateBudget:
+		var payload BudgetChangePayload
+		if err := json.Unmarshal(action.Payload, &payload); err != nil {
+			return s.fail(ctx, action, fmt.Sprintf("invalid stored payload: %v", err))
+		}
+		cid, err := uuid.Parse(payload.CampaignID)
+		if err != nil {
+			return s.fail(ctx, action, "invalid campaign id in payload")
+		}
+		camp, platform, err := s.campaigns.UpdateCampaignBudget(ctx, workspaceID, cid, payload.DailyBudget)
+		if err != nil {
+			return s.fail(ctx, action, err.Error())
+		}
+		updated, uerr := s.queries.UpdateCampaignActionResult(ctx, db.UpdateCampaignActionResultParams{
+			ID:     action.ID,
+			Status: ActionStatusExecuted,
+			Result: marshalCampaignResult(camp, platform),
+		})
+		if uerr != nil {
+			return db.CampaignAction{}, nil, fmt.Errorf("persist action result: %w", uerr)
+		}
+		return updated, nil, nil
+
 	default:
 		return action, nil, ValidationError{"unsupported action type: " + action.Type}
 	}
@@ -209,6 +304,20 @@ func marshalActionResult(res CreateResult) []byte {
 			Status:             c.Campaign.Status,
 			ExternalCampaignID: c.Campaign.ExternalCampaignID,
 		})
+	}
+	b, _ := json.Marshal(out)
+	return b
+}
+
+func marshalCampaignResult(camp db.Campaign, platform string) []byte {
+	out := map[string]any{
+		"id":                   formatUUID(camp.ID),
+		"platform":             platform,
+		"status":               camp.Status,
+		"external_campaign_id": camp.ExternalCampaignID,
+	}
+	if f, ok := numericToFloat(camp.DailyBudget); ok {
+		out["daily_budget"] = f
 	}
 	b, _ := json.Marshal(out)
 	return b
