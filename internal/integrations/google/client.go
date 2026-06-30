@@ -150,7 +150,7 @@ func (c *Client) FetchCustomerID(ctx context.Context, refreshToken string) (stri
 	if err != nil {
 		return "", err
 	}
-	raw, err := c.adsGet(ctx, at, "/customers:listAccessibleCustomers")
+	raw, err := c.adsPost(ctx, at, "/customers:listAccessibleCustomers", map[string]any{})
 	if err != nil {
 		return "", err
 	}
@@ -173,7 +173,7 @@ func (c *Client) FetchCustomers(ctx context.Context, refreshToken string) ([]int
 	if err != nil {
 		return nil, err
 	}
-	raw, err := c.adsGet(ctx, at, "/customers:listAccessibleCustomers")
+	raw, err := c.adsPost(ctx, at, "/customers:listAccessibleCustomers", map[string]any{})
 	if err != nil {
 		return nil, err
 	}

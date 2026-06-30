@@ -188,6 +188,7 @@ func (h *AIHandler) Chat(c echo.Context) error {
 
 	stream, err := h.aiClient.StreamChat(ctx, systemPrompt, history)
 	if err != nil {
+		slog.Error("ai stream failed", "error", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "ai request failed"})
 	}
 

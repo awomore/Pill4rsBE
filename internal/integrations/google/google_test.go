@@ -68,6 +68,9 @@ func TestFetchCustomerID(t *testing.T) {
 		case strings.Contains(r.URL.Path, "listAccessibleCustomers"):
 			gotDevToken = r.Header.Get("developer-token")
 			gotAuth = r.Header.Get("Authorization")
+			if r.Method != http.MethodPost {
+				t.Errorf("listAccessibleCustomers must use POST, got %s", r.Method)
+			}
 			w.Write([]byte(`{"resourceNames":["customers/1234567890"]}`))
 		default:
 			t.Errorf("unexpected path %q", r.URL.Path)
