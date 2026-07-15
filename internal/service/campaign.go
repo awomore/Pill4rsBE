@@ -257,6 +257,12 @@ func (s *CampaignService) LaunchCampaign(ctx context.Context, workspaceID, campa
 	if textValue(account.PageID) == "" {
 		return db.Campaign{}, "", ValidationError{"connect a Facebook page to this ad account before launching"}
 	}
+	if camp.Objective.Valid {
+		obj := integrations.CampaignObjective(camp.Objective.String)
+		if (obj == integrations.ObjectiveSales || obj == integrations.ObjectiveLeads) && textValue(account.PixelID) == "" {
+			return db.Campaign{}, "", ValidationError{"connect a Meta pixel to this ad account before launching a sales or leads campaign"}
+		}
+	}
 	spec := specFromCampaign(camp, budget)
 	if spec.Creative == nil || !looksLikeURL(spec.Creative.LinkURL) {
 		return db.Campaign{}, "", ValidationError{"campaign is missing creative details"}
