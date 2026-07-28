@@ -20,15 +20,16 @@ type ProposedCreative struct {
 
 // ProposedCampaign is the structured campaign spec Oma returns via the tool call.
 type ProposedCampaign struct {
-	Name        string            `json:"name"`
-	Objective   string            `json:"objective"`
-	DailyBudget float64           `json:"daily_budget"`
-	Currency    string            `json:"currency"`
-	StartDate   string            `json:"start_date"`
-	EndDate     string            `json:"end_date"`
-	CTA         string            `json:"cta"`
-	Targeting   map[string]any    `json:"targeting"`
-	Creative    *ProposedCreative `json:"creative"`
+	Name         string             `json:"name"`
+	Objective    string             `json:"objective"`
+	DailyBudget  float64            `json:"daily_budget"`
+	Currency     string             `json:"currency"`
+	StartDate    string             `json:"start_date"`
+	EndDate      string             `json:"end_date"`
+	CTA          string             `json:"cta"`
+	Targeting    map[string]any     `json:"targeting"`
+	Creative     *ProposedCreative  `json:"creative"`
+	Rationale    map[string]string  `json:"rationale"`
 }
 
 // ProposeCampaign asks the model to turn a natural-language instruction into a
@@ -124,6 +125,10 @@ func campaignToolSchema() map[string]any {
 					"link_url":     map[string]any{"type": "string"},
 					"image_url":    map[string]any{"type": "string"},
 				},
+			},
+			"rationale": map[string]any{
+				"type": "object",
+				"description": "Short per-field rationale strings explaining why each value was chosen. Keys are field names (name, objective, daily_budget, targeting, creative, cta, start_date, end_date).",
 			},
 		},
 		"required": []string{"name", "objective", "daily_budget", "creative"},

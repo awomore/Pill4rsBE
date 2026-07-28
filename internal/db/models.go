@@ -37,24 +37,31 @@ type CampaignAction struct {
 }
 
 type Campaign struct {
-	ID                 pgtype.UUID
-	WorkspaceID        pgtype.UUID
-	AdAccountID        pgtype.UUID
-	ExternalCampaignID string
-	Name               string
-	Objective          pgtype.Text
-	Status             string
-	DailyBudget        pgtype.Numeric
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	StartDate          pgtype.Date
-	EndDate            pgtype.Date
-	Cta                pgtype.Text
-	Targeting          []byte
-	ExternalAdsetID    pgtype.Text
-	ExternalAdID       pgtype.Text
-	ExternalCreativeID pgtype.Text
-	Creative           []byte
+	ID                   pgtype.UUID
+	WorkspaceID          pgtype.UUID
+	AdAccountID          pgtype.UUID
+	ExternalCampaignID   string
+	Name                 string
+	Objective            pgtype.Text
+	Status               string
+	DailyBudget          pgtype.Numeric
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	StartDate            pgtype.Date
+	EndDate              pgtype.Date
+	Cta                  pgtype.Text
+	Targeting            []byte
+	ExternalAdsetID      pgtype.Text
+	ExternalAdID         pgtype.Text
+	ExternalCreativeID   pgtype.Text
+	Creative             []byte
+	BidStrategy          pgtype.Text
+	BidCap               pgtype.Numeric
+	PacingType           pgtype.Text
+	FrequencyCap         pgtype.Int4
+	FrequencyCapTimeUnit pgtype.Text
+	Variants             []byte
+	Provenance           []byte
 }
 
 type Conversation struct {

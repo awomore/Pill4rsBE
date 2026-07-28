@@ -112,6 +112,7 @@ func (c *Client) CreateCampaign(ctx context.Context, accessToken, accountID stri
 
 func (c *Client) createAdSet(ctx context.Context, accessToken string, account integrations.PlatformAccount, campaignID string, spec integrations.CampaignSpec) (string, error) {
 	optGoal, billing, event := metaOptimization(spec.Objective)
+	targeting := spec.FirstVariantTargeting()
 
 	form := url.Values{}
 	form.Set("name", spec.Name+" — ad set")
@@ -121,9 +122,9 @@ func (c *Client) createAdSet(ctx context.Context, accessToken string, account in
 	}
 	form.Set("billing_event", billing)
 	form.Set("optimization_goal", optGoal)
-	form.Set("bid_strategy", "LOWEST_COST_WITHOUT_CAP")
+	form.Set("bid_strategy", bidStrategy(spec))
 	form.Set("status", "PAUSED")
-	form.Set("targeting", metaTargeting(spec.Targeting))
+	form.Set("targeting", metaTargeting(targeting))
 	if !spec.StartDate.IsZero() {
 		form.Set("start_time", spec.StartDate.UTC().Format(time.RFC3339))
 	}
@@ -134,6 +135,13 @@ func (c *Client) createAdSet(ctx context.Context, accessToken string, account in
 		po, _ := json.Marshal(map[string]string{"pixel_id": account.PixelID, "custom_event_type": event})
 		form.Set("promoted_object", string(po))
 	}
+	if spec.PacingType != "" && spec.PacingType != integrations.PacingStandard {
+		form.Set("pacing_type", strings.ToUpper(spec.PacingType)[0:1]+strings.ToUpper(spec.PacingType)[1:])
+	}
+	if spec.FrequencyCap > 0 && spec.FrequencyCapUnit != "" {
+		form.Set("frequency_cap", strconv.Itoa(spec.FrequencyCap))
+		form.Set("frequency_cap_time_unit", spec.FrequencyCapUnit)
+	}
 	form.Set("access_token", accessToken)
 
 	endpoint := fmt.Sprintf("%s/%s/%s/adsets", c.graphBaseURL, c.apiVersion, ensureActPrefix(account.AccountID))
@@ -141,7 +149,7 @@ func (c *Client) createAdSet(ctx context.Context, accessToken string, account in
 }
 
 func (c *Client) createCreative(ctx context.Context, accessToken string, account integrations.PlatformAccount, spec integrations.CampaignSpec) (string, error) {
-	cr := spec.Creative
+	cr := spec.FirstVariantCreative()
 	if cr == nil {
 		return "", fmt.Errorf("creative is required")
 	}
@@ -233,6 +241,222 @@ func (c *Client) postForm(ctx context.Context, endpoint string, form url.Values)
 
 func minorUnits(f float64) string {
 	return strconv.FormatInt(int64(math.Round(f*100)), 10)
+}
+
+func bidStrategy(spec integrations.CampaignSpec) string {
+	if spec.BidStrategy == "" {
+		return "LOWEST_COST_WITHOUT_CAP"
+	}
+	return strings.ToUpper(spec.BidStrategy)
+}
+
+// EstimateDelivery calls Meta's delivery_estimate endpoint and returns reach,
+// impressions, spend, CPM, and click estimates for an unsaved targeting spec.
+// It satisfies integrations.CampaignForecaster.
+var _ integrations.CampaignForecaster = (*Client)(nil)
+
+func (c *Client) EstimateDelivery(ctx context.Context, accessToken string, account integrations.PlatformAccount, spec integrations.ForecastSpec) (*integrations.ForecastResult, error) {
+	optGoal, _, _ := metaOptimization(integrations.CampaignObjective(spec.Objective))
+
+	payload := map[string]any{
+		"targeting_spec":  metaTargetingMap(spec.Targeting),
+		"optimization_goal": optGoal,
+		"access_token":    accessToken,
+	}
+	if spec.DailyBudget > 0 {
+		payload["daily_budget"] = int64(math.Round(spec.DailyBudget * 100))
+	}
+
+	body, _ := json.Marshal(payload)
+	form := url.Values{}
+	form.Set("access_token", accessToken)
+	for k, v := range payload {
+		if k == "access_token" {
+			continue
+		}
+		if vb, ok := v.(string); ok {
+			form.Set(k, vb)
+		} else if b, err := json.Marshal(v); err == nil {
+			form.Set(k, string(b))
+		}
+	}
+	_ = body
+
+	endpoint := fmt.Sprintf("%s/%s/%s/delivery_estimate?%s", c.graphBaseURL, c.apiVersion, ensureActPrefix(account.AccountID), form.Encode())
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build forecast request: %w", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("forecast request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read forecast response: %w", err)
+	}
+
+	var parsed struct {
+		Data []struct {
+			EstimateDAU          int64  `json:"estimate_dau"`
+			EstimateMau          int64  `json:"estimate_mau"`
+			BidEstimate          map[string]any `json:"bid_estimate"`
+			Error                *graphError   `json:"error"`
+		} `json:"data"`
+		Error *graphError `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("decode forecast response: %w", err)
+	}
+	if parsed.Error != nil {
+		return nil, parsed.Error
+	}
+	if len(parsed.Data) == 0 {
+		return c.fallbackForecast(spec)
+	}
+
+	d := parsed.Data[0]
+	if d.Error != nil {
+		return nil, d.Error
+	}
+
+	reach := d.EstimateMau
+	if reach == 0 {
+		reach = d.EstimateDAU * 30
+	}
+
+	result := &integrations.ForecastResult{
+		EstimatedReach: reach,
+		Currency:       spec.Currency,
+	}
+	if result.Currency == "" {
+		result.Currency = "NGN"
+	}
+
+	if d.BidEstimate != nil {
+		if r, ok := toInt64(d.BidEstimate["reach"]); ok && r > 0 {
+			result.EstimatedReach = r
+		}
+		if imp, ok := toInt64(d.BidEstimate["impressions"]); ok {
+			result.EstimatedImpressions = imp
+		}
+		if sp, ok := toFloat64(d.BidEstimate["spend"]); ok {
+			result.EstimatedSpend = sp
+		}
+		if cpm, ok := toFloat64(d.BidEstimate["cpm"]); ok {
+			result.EstimatedCPM = cpm
+		}
+		if cl, ok := toInt64(d.BidEstimate["clicks"]); ok {
+			result.EstimatedClicks = cl
+		}
+	}
+	if result.EstimatedImpressions == 0 && reach > 0 && spec.DailyBudget > 0 {
+		result.EstimatedImpressions = reach
+		result.EstimatedCPM = spec.DailyBudget / float64(reach) * 1000
+		result.EstimatedSpend = spec.DailyBudget
+	}
+	if result.EstimatedCPM > 0 && result.EstimatedImpressions > 0 {
+		result.EstimatedSpend = result.EstimatedCPM * float64(result.EstimatedImpressions) / 1000
+	}
+	if result.EstimatedImpressions > 0 && result.EstimatedCPM == 0 {
+		result.EstimatedCPM = (spec.DailyBudget / float64(result.EstimatedImpressions)) * 1000
+	}
+	if result.EstimatedReach > 0 && result.EstimatedClicks == 0 {
+		result.EstimatedClicks = int64(float64(result.EstimatedReach) * 0.01) // 1% CTR assumption
+	}
+
+	return result, nil
+}
+
+func (c *Client) fallbackForecast(spec integrations.ForecastSpec) (*integrations.ForecastResult, error) {
+	avgCPM := 300.0
+	impressions := int64((spec.DailyBudget / avgCPM) * 1000)
+	reach := int64(float64(impressions) * 0.5)
+	clicks := int64(float64(impressions) * 0.01)
+	return &integrations.ForecastResult{
+		EstimatedReach:       reach,
+		EstimatedImpressions: impressions,
+		EstimatedSpend:       spec.DailyBudget,
+		EstimatedCPM:         avgCPM,
+		EstimatedClicks:      clicks,
+		Currency:             spec.Currency,
+	}, nil
+}
+
+func metaTargetingMap(t map[string]any) map[string]any {
+	if t == nil {
+		t = map[string]any{}
+	}
+	if _, ok := t["geo_locations"]; ok {
+		return t
+	}
+	if geo, ok := toStringSliceFromMap(t, "geo"); ok {
+		t["geo_locations"] = map[string]any{"countries": geo}
+	} else if countries, ok := toStringSliceFromMap(t, "countries"); ok {
+		t["geo_locations"] = map[string]any{"countries": countries}
+	} else {
+		t["geo_locations"] = map[string]any{"countries": []string{"US"}}
+	}
+	return t
+}
+
+func toStringSliceFromMap(m map[string]any, key string) ([]string, bool) {
+	if v, ok := m[key]; ok {
+		switch x := v.(type) {
+		case []string:
+			return x, true
+		case []any:
+			var out []string
+			for _, e := range x {
+				if s, ok := e.(string); ok {
+					out = append(out, s)
+				}
+			}
+			if len(out) > 0 {
+				return out, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func toInt64(v any) (int64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return int64(x), true
+	case int64:
+		return x, true
+	case int:
+		return int64(x), true
+	case json.Number:
+		if n, err := x.Int64(); err == nil {
+			return n, true
+		}
+		f, err := x.Float64()
+		if err == nil {
+			return int64(f), true
+		}
+	}
+	return 0, false
+}
+
+func toFloat64(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case int64:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	case json.Number:
+		if f, err := x.Float64(); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
 }
 
 // metaTargeting builds a Meta targeting spec from the generic targeting map. If

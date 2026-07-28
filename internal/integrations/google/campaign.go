@@ -69,7 +69,8 @@ func (c *Client) EnsureDeliverable(ctx context.Context, accessToken string, acco
 	}
 
 	if state.AdID == "" {
-		if spec.Creative == nil || spec.Creative.LinkURL == "" {
+		cr := spec.FirstVariantCreative()
+		if cr == nil || cr.LinkURL == "" {
 			return state, fmt.Errorf("creative with a destination link is required")
 		}
 		adGroupRN := fmt.Sprintf("customers/%s/adGroups/%s", cid, state.AdSetID)
@@ -77,7 +78,7 @@ func (c *Client) EnsureDeliverable(ctx context.Context, accessToken string, acco
 			"adGroup": adGroupRN,
 			"status":  "PAUSED",
 			"ad": map[string]any{
-				"finalUrls": []string{spec.Creative.LinkURL},
+				"finalUrls": []string{cr.LinkURL},
 				"responsiveSearchAd": map[string]any{
 					"headlines":    rsaHeadlines(spec),
 					"descriptions": rsaDescriptions(spec),
@@ -95,8 +96,9 @@ func (c *Client) EnsureDeliverable(ctx context.Context, accessToken string, acco
 
 func rsaHeadlines(spec integrations.CampaignSpec) []map[string]string {
 	var cands []string
-	if spec.Creative != nil && spec.Creative.Headline != "" {
-		cands = append(cands, spec.Creative.Headline)
+	cr := spec.FirstVariantCreative()
+	if cr != nil && cr.Headline != "" {
+		cands = append(cands, cr.Headline)
 	}
 	cands = append(cands, spec.Name, "Learn More", "Shop Now")
 	return textObjs(cands, 3, 30)
@@ -104,12 +106,13 @@ func rsaHeadlines(spec integrations.CampaignSpec) []map[string]string {
 
 func rsaDescriptions(spec integrations.CampaignSpec) []map[string]string {
 	var cands []string
-	if spec.Creative != nil {
-		if spec.Creative.PrimaryText != "" {
-			cands = append(cands, spec.Creative.PrimaryText)
+	cr := spec.FirstVariantCreative()
+	if cr != nil {
+		if cr.PrimaryText != "" {
+			cands = append(cands, cr.PrimaryText)
 		}
-		if spec.Creative.Description != "" {
-			cands = append(cands, spec.Creative.Description)
+		if cr.Description != "" {
+			cands = append(cands, cr.Description)
 		}
 	}
 	cands = append(cands, "Discover more today.", "Visit our site to learn more.")

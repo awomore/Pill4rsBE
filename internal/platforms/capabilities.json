@@ -1,0 +1,130 @@
+{
+  "meta": {
+    "targeting": {
+      "geo": "supported",
+      "age": "supported",
+      "gender": "supported",
+      "custom_audiences": "supported",
+      "lookalike_audiences": "supported",
+      "interests": "supported",
+      "behaviors": "supported",
+      "connections": "supported",
+      "dayparting": "supported",
+      "device": "supported",
+      "platform": "supported",
+      "placements": "supported",
+      "languages": "supported"
+    },
+    "bidding": {
+      "lowest_cost": "supported",
+      "lowest_cost_with_cap": "supported",
+      "cost_cap": "supported",
+      "bid_cap": "supported",
+      "roas_goal": "supported"
+    },
+    "frequency_cap": "supported",
+    "pacing": {
+      "standard": "supported",
+      "accelerated": "deprecated"
+    },
+    "creative": {
+      "single_image": "supported",
+      "video": "supported",
+      "carousel": "supported",
+      "collection": "supported"
+    },
+    "objectives": {
+      "awareness": "supported",
+      "traffic": "supported",
+      "engagement": "supported",
+      "leads": "supported",
+      "sales": "supported",
+      "app_promotion": "supported"
+    },
+    "forecast": "supported"
+  },
+  "tiktok": {
+    "targeting": {
+      "geo": "supported",
+      "age": "supported",
+      "gender": "supported",
+      "custom_audiences": "supported",
+      "lookalike_audiences": "supported",
+      "interests": "supported",
+      "behaviors": "supported",
+      "dayparting": "unsupported",
+      "device": "partial",
+      "platform": "unsupported",
+      "placements": "unsupported",
+      "languages": "unsupported"
+    },
+    "bidding": {
+      "lowest_cost": "supported",
+      "cost_cap": "supported",
+      "roas_goal": "supported",
+      "lowest_cost_with_cap": "unsupported",
+      "bid_cap": "unsupported"
+    },
+    "frequency_cap": "unsupported",
+    "pacing": {
+      "standard": "supported",
+      "accelerated": "supported"
+    },
+    "creative": {
+      "single_image": "supported",
+      "video": "supported",
+      "carousel": "partial"
+    },
+    "objectives": {
+      "awareness": "supported",
+      "traffic": "supported",
+      "engagement": "supported",
+      "leads": "supported",
+      "sales": "supported",
+      "app_promotion": "supported"
+    },
+    "forecast": "unsupported"
+  },
+  "google": {
+    "targeting": {
+      "geo": "supported",
+      "age": "supported",
+      "gender": "supported",
+      "custom_audiences": "supported",
+      "lookalike_audiences": "unsupported",
+      "interests": "supported",
+      "behaviors": "unsupported",
+      "dayparting": "supported",
+      "device": "supported",
+      "platform": "unsupported",
+      "placements": "unsupported",
+      "languages": "supported"
+    },
+    "bidding": {
+      "lowest_cost": "supported",
+      "cost_cap": "supported",
+      "roas_goal": "supported",
+      "lowest_cost_with_cap": "unsupported",
+      "bid_cap": "unsupported"
+    },
+    "frequency_cap": "supported",
+    "pacing": {
+      "standard": "supported",
+      "accelerated": "supported"
+    },
+    "creative": {
+      "single_image": "unsupported",
+      "video": "unsupported",
+      "responsive_search": "supported"
+    },
+    "objectives": {
+      "awareness": "unsupported",
+      "traffic": "supported",
+      "engagement": "unsupported",
+      "leads": "supported",
+      "sales": "supported",
+      "app_promotion": "unsupported"
+    },
+    "forecast": "supported"
+  }
+}

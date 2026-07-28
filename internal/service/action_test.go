@@ -23,6 +23,15 @@ func validPayload() CampaignProposalPayload {
 			LinkURL:     "https://shop.example.com",
 			ImageURL:    "https://cdn.example.com/a.jpg",
 		},
+		Rationale: map[string]string{
+			"name":         "Seasonal naming convention",
+			"daily_budget": "Based on your average spend of NGN 4,500",
+		},
+		Provenance: map[string]string{
+			"name":         "oma",
+			"daily_budget": "oma",
+			"objective":    "oma",
+		},
 	}
 }
 

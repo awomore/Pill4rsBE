@@ -86,13 +86,14 @@ func (c *Client) EnsureDeliverable(ctx context.Context, accessToken string, acco
 	}
 
 	if state.CreativeID == "" {
-		if spec.Creative == nil || spec.Creative.ImageURL == "" {
+		cr := spec.FirstVariantCreative()
+		if cr == nil || cr.ImageURL == "" {
 			return state, fmt.Errorf("creative image is required")
 		}
 		data, err := c.post(ctx, "/file/image/ad/upload/", accessToken, map[string]any{
 			"advertiser_id": account.AccountID,
 			"upload_type":   "UPLOAD_BY_URL",
-			"image_url":     spec.Creative.ImageURL,
+			"image_url":     cr.ImageURL,
 		})
 		if err != nil {
 			return state, err
@@ -140,23 +141,25 @@ func (c *Client) EnsureDeliverable(ctx context.Context, accessToken string, acco
 }
 
 func creativeText(spec integrations.CampaignSpec) string {
-	if spec.Creative == nil {
+	cr := spec.FirstVariantCreative()
+	if cr == nil {
 		return spec.Name
 	}
-	if spec.Creative.PrimaryText != "" {
-		return spec.Creative.PrimaryText
+	if cr.PrimaryText != "" {
+		return cr.PrimaryText
 	}
-	if spec.Creative.Headline != "" {
-		return spec.Creative.Headline
+	if cr.Headline != "" {
+		return cr.Headline
 	}
 	return spec.Name
 }
 
 func creativeLink(spec integrations.CampaignSpec) string {
-	if spec.Creative == nil {
+	cr := spec.FirstVariantCreative()
+	if cr == nil {
 		return ""
 	}
-	return spec.Creative.LinkURL
+	return cr.LinkURL
 }
 
 func ctaOrDefault(cta string) string {

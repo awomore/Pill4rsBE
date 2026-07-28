@@ -60,6 +60,8 @@ type CampaignProposalPayload struct {
 	AdAccountIDs []string                   `json:"ad_account_ids"`
 	Targeting    map[string]any             `json:"targeting"`
 	Creative     *integrations.CreativeSpec `json:"creative"`
+	Rationale    map[string]string          `json:"rationale,omitempty"`
+	Provenance   map[string]string          `json:"provenance,omitempty"`
 }
 
 func (p CampaignProposalPayload) toInput() (CreateCampaignInput, error) {

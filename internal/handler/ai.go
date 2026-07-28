@@ -89,6 +89,8 @@ func (h *AIHandler) ProposeCampaign(c echo.Context) error {
 		AdAccountIDs: req.AdAccountIDs,
 		Targeting:    proposed.Targeting,
 		Creative:     creativeFromProposed(proposed.Creative),
+		Rationale:    proposed.Rationale,
+		Provenance:   omaProvenance(proposed),
 	}
 
 	action, err := h.actions.ProposeCreateCampaign(ctx, wid, service.ActorOma, payload)
@@ -114,6 +116,46 @@ func creativeFromProposed(cr *ai.ProposedCreative) *integrations.CreativeSpec {
 		LinkURL:     cr.LinkURL,
 		ImageURL:    cr.ImageURL,
 	}
+}
+
+func omaProvenance(pc *ai.ProposedCampaign) map[string]string {
+	p := make(map[string]string)
+	if pc.Name != "" {
+		p["name"] = "oma"
+	}
+	if pc.Objective != "" {
+		p["objective"] = "oma"
+	}
+	if pc.DailyBudget > 0 {
+		p["daily_budget"] = "oma"
+	}
+	if pc.Currency != "" {
+		p["currency"] = "oma"
+	}
+	if pc.CTA != "" {
+		p["cta"] = "oma"
+	}
+	if pc.StartDate != "" {
+		p["start_date"] = "oma"
+	}
+	if pc.EndDate != "" {
+		p["end_date"] = "oma"
+	}
+	if len(pc.Targeting) > 0 {
+		p["targeting"] = "oma"
+		for k := range pc.Targeting {
+			p["variants[0].targeting."+k] = "oma"
+		}
+	}
+	if pc.Creative != nil {
+		p["creative"] = "oma"
+		p["variants[0].creative.primary_text"] = "oma"
+		p["variants[0].creative.headline"] = "oma"
+		p["variants[0].creative.description"] = "oma"
+		p["variants[0].creative.link_url"] = "oma"
+		p["variants[0].creative.image_url"] = "oma"
+	}
+	return p
 }
 
 type chatRequest struct {

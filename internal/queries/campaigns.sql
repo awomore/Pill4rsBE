@@ -24,8 +24,12 @@ WHERE c.workspace_id = $1
 ORDER BY c.created_at DESC;
 
 -- name: CreateCampaign :one
-INSERT INTO campaigns (workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget, start_date, end_date, cta, targeting, external_adset_id, external_ad_id, external_creative_id, creative)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+INSERT INTO campaigns (workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget, start_date, end_date, cta, targeting, external_adset_id, external_ad_id, external_creative_id, creative, bid_strategy, bid_cap, pacing_type, frequency_cap, frequency_cap_time_unit, variants, provenance)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+RETURNING *;
+
+-- name: UpdateCampaignProvenance :one
+UPDATE campaigns SET provenance = $2, updated_at = now() WHERE id = $1
 RETURNING *;
 
 -- name: GetCampaignByIDForWorkspace :one

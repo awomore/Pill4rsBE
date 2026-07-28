@@ -25,16 +25,28 @@ func NewCampaignHandler(svc *service.CampaignService, actions *service.ActionSer
 }
 
 type createCampaignRequest struct {
-	Name         string           `json:"name"`
-	Objective    string           `json:"objective"`
-	DailyBudget  float64          `json:"daily_budget"`
-	Currency     string           `json:"currency"`
-	StartDate    string           `json:"start_date"`
-	EndDate      string           `json:"end_date"`
-	CTA          string           `json:"cta"`
-	AdAccountIDs []string         `json:"ad_account_ids"`
-	Targeting    map[string]any   `json:"targeting"`
-	Creative     *creativeRequest `json:"creative"`
+	Name              string                   `json:"name"`
+	Objective         string                   `json:"objective"`
+	DailyBudget       float64                  `json:"daily_budget"`
+	Currency          string                   `json:"currency"`
+	StartDate         string                   `json:"start_date"`
+	EndDate           string                   `json:"end_date"`
+	CTA               string                   `json:"cta"`
+	AdAccountIDs      []string                 `json:"ad_account_ids"`
+	BidStrategy       string                   `json:"bid_strategy,omitempty"`
+	BidCap            float64                  `json:"bid_cap,omitempty"`
+	PacingType        string                   `json:"pacing_type,omitempty"`
+	FrequencyCap      int                      `json:"frequency_cap,omitempty"`
+	FrequencyCapUnit  string                   `json:"frequency_cap_time_unit,omitempty"`
+	Targeting         map[string]any           `json:"targeting,omitempty"`
+	Creative          *creativeRequest         `json:"creative,omitempty"`
+	Variants          []variantRequest         `json:"variants,omitempty"`
+	Provenance        map[string]string        `json:"provenance,omitempty"`
+}
+
+type variantRequest struct {
+	Targeting map[string]any   `json:"targeting"`
+	Creative  *creativeRequest `json:"creative"`
 }
 
 type creativeRequest struct {
@@ -82,16 +94,23 @@ func (h *CampaignHandler) Create(c echo.Context) error {
 	}
 
 	input := service.CreateCampaignInput{
-		Name:         req.Name,
-		Objective:    req.Objective,
-		DailyBudget:  req.DailyBudget,
-		Currency:     req.Currency,
-		StartDate:    start,
-		EndDate:      end,
-		CTA:          req.CTA,
-		AdAccountIDs: req.AdAccountIDs,
-		Targeting:    req.Targeting,
-		Creative:     toCreativeSpec(req.Creative),
+		Name:             req.Name,
+		Objective:        req.Objective,
+		DailyBudget:      req.DailyBudget,
+		Currency:         req.Currency,
+		StartDate:        start,
+		EndDate:          end,
+		CTA:              req.CTA,
+		AdAccountIDs:     req.AdAccountIDs,
+		BidStrategy:      req.BidStrategy,
+		BidCap:           req.BidCap,
+		PacingType:       req.PacingType,
+		FrequencyCap:     req.FrequencyCap,
+		FrequencyCapUnit: req.FrequencyCapUnit,
+		Targeting:        req.Targeting,
+		Creative:         toCreativeSpec(req.Creative),
+		Variants:         toVariantSpecs(req.Variants),
+		Provenance:       req.Provenance,
 	}
 
 	result, err := h.svc.CreateCampaign(c.Request().Context(), wid, input)
@@ -173,11 +192,22 @@ func campaignToMap(camp db.Campaign, platform string) map[string]interface{} {
 	if camp.Cta.Valid {
 		m["cta"] = camp.Cta.String
 	}
-	if len(camp.Targeting) > 0 {
-		m["targeting"] = json.RawMessage(camp.Targeting)
+	if camp.BidStrategy.Valid {
+		m["bid_strategy"] = camp.BidStrategy.String
 	}
-	if len(camp.Creative) > 0 {
-		m["creative"] = json.RawMessage(camp.Creative)
+	if camp.BidCap.Valid {
+		if f, ok := numericToFloat(camp.BidCap); ok {
+			m["bid_cap"] = f
+		}
+	}
+	if camp.PacingType.Valid {
+		m["pacing_type"] = camp.PacingType.String
+	}
+	if camp.FrequencyCap.Valid {
+		m["frequency_cap"] = camp.FrequencyCap.Int32
+	}
+	if camp.FrequencyCapTimeUnit.Valid {
+		m["frequency_cap_time_unit"] = camp.FrequencyCapTimeUnit.String
 	}
 	if camp.ExternalAdsetID.Valid {
 		m["external_adset_id"] = camp.ExternalAdsetID.String
@@ -194,7 +224,34 @@ func campaignToMap(camp db.Campaign, platform string) map[string]interface{} {
 	if camp.UpdatedAt.Valid {
 		m["updated_at"] = camp.UpdatedAt.Time
 	}
+	if len(camp.Provenance) > 0 {
+		m["provenance"] = json.RawMessage(camp.Provenance)
+	}
+	if len(camp.Variants) > 0 {
+		m["variants"] = json.RawMessage(camp.Variants)
+	} else {
+		if len(camp.Targeting) > 0 {
+			m["targeting"] = json.RawMessage(camp.Targeting)
+		}
+		if len(camp.Creative) > 0 {
+			m["creative"] = json.RawMessage(camp.Creative)
+		}
+	}
 	return m
+}
+
+func toVariantSpecs(reqs []variantRequest) []integrations.VariantSpec {
+	if reqs == nil {
+		return nil
+	}
+	out := make([]integrations.VariantSpec, 0, len(reqs))
+	for _, r := range reqs {
+		out = append(out, integrations.VariantSpec{
+			Targeting: r.Targeting,
+			Creative:  toCreativeSpec(r.Creative),
+		})
+	}
+	return out
 }
 
 func parseOptionalDate(s string) (time.Time, error) {
@@ -239,7 +296,41 @@ func (h *CampaignHandler) setStatus(c echo.Context, status string) error {
 }
 
 type updateBudgetRequest struct {
-	DailyBudget *float64 `json:"daily_budget"`
+	DailyBudget *float64           `json:"daily_budget"`
+	Provenance  map[string]string  `json:"provenance,omitempty"`
+}
+
+// Forecast returns estimated reach/spend for an unsaved targeting spec.
+func (h *CampaignHandler) Forecast(c echo.Context) error {
+	workspaceID, _ := c.Get("workspace_id").(string)
+	wid, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return badRequest(c, "invalid workspace id")
+	}
+
+	var req integrations.ForecastSpec
+	if err := c.Bind(&req); err != nil {
+		return badRequest(c, "invalid request body")
+	}
+	if strings.TrimSpace(req.Platform) == "" {
+		return badRequest(c, "platform is required")
+	}
+	adAccountID := c.QueryParam("ad_account_id")
+	if adAccountID == "" {
+		return badRequest(c, "ad_account_id query param is required")
+	}
+	req.AdAccountID = adAccountID
+
+	result, err := h.svc.ForecastDelivery(c.Request().Context(), wid, req.AdAccountID, req)
+	if err != nil {
+		var ve service.ValidationError
+		if errors.As(err, &ve) {
+			return badRequest(c, ve.Msg)
+		}
+		slog.Error("forecast delivery failed", "error", err)
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to estimate delivery"})
+	}
+	return c.JSON(http.StatusOK, result)
 }
 
 // UpdateBudget changes a campaign's daily budget.
@@ -262,6 +353,9 @@ func (h *CampaignHandler) UpdateBudget(c echo.Context) error {
 	camp, platform, err := h.svc.UpdateCampaignBudget(c.Request().Context(), ws, cid, *req.DailyBudget)
 	if err != nil {
 		return manageError(c, err)
+	}
+	if len(req.Provenance) > 0 {
+		camp, _ = h.svc.UpdateProvenance(c.Request().Context(), ws, cid, req.Provenance)
 	}
 	return c.JSON(http.StatusOK, campaignToMap(camp, platform))
 }
@@ -361,7 +455,28 @@ func (h *CampaignHandler) ApplyHealth(c echo.Context) error {
 			"action": actionToMap(executed),
 		})
 	}
+
+	// Mark provenance: Oma applied this change.
+	if executed.Status == service.ActionStatusExecuted {
+		h.svc.UpdateProvenance(ctx, ws, cid, map[string]string{
+			assessmentActionField(assessment): string(integrations.ProvenanceOma),
+		})
+	}
+
 	return c.JSON(http.StatusOK, actionToMap(executed))
+}
+
+func assessmentActionField(a service.HealthAssessment) string {
+	if a.Action == nil {
+		return ""
+	}
+	switch a.Action.Type {
+	case service.ActionSetStatus:
+		return "status"
+	case service.ActionUpdateBudget:
+		return "daily_budget"
+	}
+	return ""
 }
 
 func manageError(c echo.Context, err error) error {

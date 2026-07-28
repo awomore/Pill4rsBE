@@ -76,6 +76,7 @@ func main() {
 	campaignHandler := handler.NewCampaignHandler(campaignService, actionService)
 	actionHandler := handler.NewActionHandler(actionService)
 	aiHandler := handler.NewAIHandler(queries, aiClient, actionService)
+	platformsHandler := handler.NewPlatformsHandler()
 
 	e := echo.New()
 	e.HideBanner = true
@@ -139,6 +140,12 @@ func main() {
 	e.GET("/api/actions", actionHandler.List)
 	e.POST("/api/actions/:id/approve", actionHandler.Approve)
 	e.POST("/api/actions/:id/reject", actionHandler.Reject)
+
+	// Platform capabilities matrix — static, fetched once.
+	e.GET("/api/platforms/capabilities", platformsHandler.Capabilities)
+
+	// Forecast — estimates reach/spend for an unsaved targeting spec.
+	e.POST("/api/campaigns/forecast", campaignHandler.Forecast)
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	go func() {

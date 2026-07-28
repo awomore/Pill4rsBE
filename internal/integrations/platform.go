@@ -81,18 +81,115 @@ type CreativeSpec struct {
 	ImageURL    string `json:"image_url"`
 }
 
+// BidStrategy constants.
+const (
+	BidStrategyLowestCostWithoutCap = "LOWEST_COST_WITHOUT_CAP"
+	BidStrategyLowestCost           = "LOWEST_COST"
+	BidStrategyCostCap              = "COST_CAP"
+	BidStrategyRoasGoal             = "ROAS_GOAL"
+)
+
+// PacingType constants.
+const (
+	PacingStandard    = "standard"
+	PacingAccelerated = "accelerated"
+)
+
+// FrequencyCapTimeUnit constants.
+const (
+	FreqCapHour = "hour"
+	FreqCapDay  = "day"
+	FreqCapWeek = "week"
+)
+
+// FieldProvenance tracks who set a campaign field value.
+type FieldProvenance string
+
+const (
+	ProvenanceUser    FieldProvenance = "user"
+	ProvenanceOma     FieldProvenance = "oma"
+	ProvenanceDefault FieldProvenance = "default"
+)
+
+// VariantSpec pairs one targeting spec with one creative. Multiple variants let
+// one campaign compare performance across audiences or ad copy against one budget.
+type VariantSpec struct {
+	Targeting map[string]any `json:"targeting"`
+	Creative  *CreativeSpec  `json:"creative"`
+}
+
 // CampaignSpec is the single internal description of a campaign that is fanned
 // out to every selected platform. Budgets are in major currency units.
+// Targeting and Creative live under Variants so a future multi-variant UI
+// (e.g. "Ikeja vs Lekki") slots in without a migration.
 type CampaignSpec struct {
-	Name        string
-	Objective   CampaignObjective
-	DailyBudget float64
-	Currency    string
-	StartDate   time.Time
-	EndDate     time.Time
-	CTA         string
-	Targeting   map[string]any
-	Creative    *CreativeSpec
+	Name              string
+	Objective         CampaignObjective
+	DailyBudget       float64
+	Currency          string
+	StartDate         time.Time
+	EndDate           time.Time
+	CTA               string
+	BidStrategy       string
+	BidCap            float64
+	PacingType        string
+	FrequencyCap      int
+	FrequencyCapUnit  string
+	Variants          []VariantSpec
+
+	// Deprecated, kept for backwards compat with existing platform adapters
+	// during migration. Prefer Variants[0].Targeting / Variants[0].Creative.
+	Targeting map[string]any
+	Creative  *CreativeSpec
+}
+
+// FirstVariantTargeting returns the targeting for the first variant, falling back
+// to the top-level Targeting for backwards compat.
+func (s CampaignSpec) FirstVariantTargeting() map[string]any {
+	if len(s.Variants) > 0 && s.Variants[0].Targeting != nil {
+		return s.Variants[0].Targeting
+	}
+	return s.Targeting
+}
+
+// FirstVariantCreative returns the creative for the first variant, falling back
+// to the top-level Creative for backwards compat.
+func (s CampaignSpec) FirstVariantCreative() *CreativeSpec {
+	if len(s.Variants) > 0 && s.Variants[0].Creative != nil {
+		return s.Variants[0].Creative
+	}
+	return s.Creative
+}
+
+// ForecastSpec is the input for a reach/spend estimate. It carries only the
+// fields that affect delivery (no name, no creative, no campaign ID).
+type ForecastSpec struct {
+	Platform      string         `json:"platform"`
+	AdAccountID   string         `json:"ad_account_id"`
+	Objective     string         `json:"objective"`
+	DailyBudget   float64        `json:"daily_budget"`
+	Currency      string         `json:"currency"`
+	Targeting     map[string]any `json:"targeting"`
+	BidStrategy   string         `json:"bid_strategy,omitempty"`
+	BidCap        float64        `json:"bid_cap,omitempty"`
+	StartDate     string         `json:"start_date,omitempty"`
+	EndDate       string         `json:"end_date,omitempty"`
+}
+
+// ForecastResult is the estimated reach/spend for a draft targeting spec.
+type ForecastResult struct {
+	EstimatedReach        int64   `json:"estimated_reach"`
+	EstimatedImpressions  int64   `json:"estimated_impressions"`
+	EstimatedSpend        float64 `json:"estimated_spend"`
+	EstimatedCPM          float64 `json:"estimated_cpm"`
+	EstimatedClicks       int64   `json:"estimated_clicks"`
+	Currency              string  `json:"currency"`
+}
+
+// CampaignForecaster provides delivery estimates for an unsaved targeting spec.
+type CampaignForecaster interface {
+	Platform() string
+	EstimateDelivery(ctx context.Context, accessToken string, account PlatformAccount, spec ForecastSpec) (*ForecastResult, error)
 }
 
 // PlatformAccount carries the account-level identifiers an adapter needs.
