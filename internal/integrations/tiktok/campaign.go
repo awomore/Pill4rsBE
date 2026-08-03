@@ -110,7 +110,7 @@ func (c *Client) EnsureDeliverable(ctx context.Context, accessToken string, acco
 	if state.AdID == "" {
 		creative := map[string]any{
 			"ad_name":          spec.Name + " - ad",
-			"ad_format":        "SINGLE_IMAGE",
+			"ad_format":        adFormat(spec),
 			"image_ids":        []string{state.CreativeID},
 			"ad_text":          creativeText(spec),
 			"call_to_action":   ctaOrDefault(spec.CTA),
@@ -167,4 +167,11 @@ func ctaOrDefault(cta string) string {
 		return "LEARN_MORE"
 	}
 	return cta
+}
+
+// adFormat maps the normalized creative format to TikTok's ad_format value.
+// Only image uploads are wired end-to-end; non-image formats fall back to
+// SINGLE_IMAGE until a video/audio upload path exists.
+func adFormat(spec integrations.CampaignSpec) string {
+	return "SINGLE_IMAGE"
 }

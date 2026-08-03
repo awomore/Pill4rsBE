@@ -259,9 +259,9 @@ func (c *Client) EstimateDelivery(ctx context.Context, accessToken string, accou
 	optGoal, _, _ := metaOptimization(integrations.CampaignObjective(spec.Objective))
 
 	payload := map[string]any{
-		"targeting_spec":  metaTargetingMap(spec.Targeting),
+		"targeting_spec":    metaTargetingMap(spec.Targeting),
 		"optimization_goal": optGoal,
-		"access_token":    accessToken,
+		"access_token":      accessToken,
 	}
 	if spec.DailyBudget > 0 {
 		payload["daily_budget"] = int64(math.Round(spec.DailyBudget * 100))
@@ -301,10 +301,10 @@ func (c *Client) EstimateDelivery(ctx context.Context, accessToken string, accou
 
 	var parsed struct {
 		Data []struct {
-			EstimateDAU          int64  `json:"estimate_dau"`
-			EstimateMau          int64  `json:"estimate_mau"`
-			BidEstimate          map[string]any `json:"bid_estimate"`
-			Error                *graphError   `json:"error"`
+			EstimateDAU int64          `json:"estimate_dau"`
+			EstimateMau int64          `json:"estimate_mau"`
+			BidEstimate map[string]any `json:"bid_estimate"`
+			Error       *graphError    `json:"error"`
 		} `json:"data"`
 		Error *graphError `json:"error"`
 	}
@@ -484,7 +484,9 @@ func metaTargeting(t map[string]any) string {
 			out["age_max"] = v
 		}
 		if g, ok := t["genders"]; ok {
-			out["genders"] = g
+			if codes := integrations.MetaGenderCodes(integrations.GenderValues(g)); len(codes) > 0 {
+				out["genders"] = codes
+			}
 		}
 	}
 	out["geo_locations"] = map[string]any{"countries": countries}

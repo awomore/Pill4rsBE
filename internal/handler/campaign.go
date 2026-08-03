@@ -25,23 +25,25 @@ func NewCampaignHandler(svc *service.CampaignService, actions *service.ActionSer
 }
 
 type createCampaignRequest struct {
-	Name              string                   `json:"name"`
-	Objective         string                   `json:"objective"`
-	DailyBudget       float64                  `json:"daily_budget"`
-	Currency          string                   `json:"currency"`
-	StartDate         string                   `json:"start_date"`
-	EndDate           string                   `json:"end_date"`
-	CTA               string                   `json:"cta"`
-	AdAccountIDs      []string                 `json:"ad_account_ids"`
-	BidStrategy       string                   `json:"bid_strategy,omitempty"`
-	BidCap            float64                  `json:"bid_cap,omitempty"`
-	PacingType        string                   `json:"pacing_type,omitempty"`
-	FrequencyCap      int                      `json:"frequency_cap,omitempty"`
-	FrequencyCapUnit  string                   `json:"frequency_cap_time_unit,omitempty"`
-	Targeting         map[string]any           `json:"targeting,omitempty"`
-	Creative          *creativeRequest         `json:"creative,omitempty"`
-	Variants          []variantRequest         `json:"variants,omitempty"`
-	Provenance        map[string]string        `json:"provenance,omitempty"`
+	Name             string            `json:"name"`
+	Objective        string            `json:"objective"`
+	DailyBudget      float64           `json:"daily_budget"`
+	Currency         string            `json:"currency"`
+	StartDate        string            `json:"start_date"`
+	EndDate          string            `json:"end_date"`
+	CTA              string            `json:"cta"`
+	AdAccountIDs     []string          `json:"ad_account_ids"`
+	Platforms        []string          `json:"platforms"`
+	BidStrategy      string            `json:"bid_strategy,omitempty"`
+	BidCap           float64           `json:"bid_cap,omitempty"`
+	PacingType       string            `json:"pacing_type,omitempty"`
+	FrequencyCap     int               `json:"frequency_cap,omitempty"`
+	FrequencyCapUnit string            `json:"frequency_cap_time_unit,omitempty"`
+	Targeting        map[string]any    `json:"targeting,omitempty"`
+	Creative         *creativeRequest  `json:"creative,omitempty"`
+	Variants         []variantRequest  `json:"variants,omitempty"`
+	Provenance       map[string]string `json:"provenance,omitempty"`
+	Rationale        map[string]string `json:"rationale,omitempty"`
 }
 
 type variantRequest struct {
@@ -55,6 +57,7 @@ type creativeRequest struct {
 	Description string `json:"description"`
 	LinkURL     string `json:"link_url"`
 	ImageURL    string `json:"image_url"`
+	Format      string `json:"format,omitempty"`
 }
 
 func toCreativeSpec(r *creativeRequest) *integrations.CreativeSpec {
@@ -67,6 +70,7 @@ func toCreativeSpec(r *creativeRequest) *integrations.CreativeSpec {
 		Description: r.Description,
 		LinkURL:     r.LinkURL,
 		ImageURL:    r.ImageURL,
+		Format:      r.Format,
 	}
 }
 
@@ -102,6 +106,7 @@ func (h *CampaignHandler) Create(c echo.Context) error {
 		EndDate:          end,
 		CTA:              req.CTA,
 		AdAccountIDs:     req.AdAccountIDs,
+		Platforms:        req.Platforms,
 		BidStrategy:      req.BidStrategy,
 		BidCap:           req.BidCap,
 		PacingType:       req.PacingType,
@@ -111,6 +116,7 @@ func (h *CampaignHandler) Create(c echo.Context) error {
 		Creative:         toCreativeSpec(req.Creative),
 		Variants:         toVariantSpecs(req.Variants),
 		Provenance:       req.Provenance,
+		Rationale:        req.Rationale,
 	}
 
 	result, err := h.svc.CreateCampaign(c.Request().Context(), wid, input)
@@ -227,6 +233,9 @@ func campaignToMap(camp db.Campaign, platform string) map[string]interface{} {
 	if len(camp.Provenance) > 0 {
 		m["provenance"] = json.RawMessage(camp.Provenance)
 	}
+	if len(camp.Rationale) > 0 {
+		m["rationale"] = json.RawMessage(camp.Rationale)
+	}
 	if len(camp.Variants) > 0 {
 		m["variants"] = json.RawMessage(camp.Variants)
 	} else {
@@ -296,8 +305,8 @@ func (h *CampaignHandler) setStatus(c echo.Context, status string) error {
 }
 
 type updateBudgetRequest struct {
-	DailyBudget *float64           `json:"daily_budget"`
-	Provenance  map[string]string  `json:"provenance,omitempty"`
+	DailyBudget *float64          `json:"daily_budget"`
+	Provenance  map[string]string `json:"provenance,omitempty"`
 }
 
 // Forecast returns estimated reach/spend for an unsaved targeting spec.

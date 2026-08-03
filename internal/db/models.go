@@ -62,6 +62,7 @@ type Campaign struct {
 	FrequencyCapTimeUnit pgtype.Text
 	Variants             []byte
 	Provenance           []byte
+	Rationale            []byte
 }
 
 type Conversation struct {

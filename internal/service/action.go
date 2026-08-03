@@ -84,6 +84,8 @@ func (p CampaignProposalPayload) toInput() (CreateCampaignInput, error) {
 		AdAccountIDs: p.AdAccountIDs,
 		Targeting:    p.Targeting,
 		Creative:     p.Creative,
+		Provenance:   p.Provenance,
+		Rationale:    p.Rationale,
 	}, nil
 }
 

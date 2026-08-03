@@ -63,27 +63,27 @@ func NewCampaignService(queries *db.Queries, encKey string, adapters ...integrat
 }
 
 // CreateCampaignInput is the single user intent fanned out across platforms.
+// Either AdAccountIDs picks specific accounts or Platforms selects by driver key.
 type CreateCampaignInput struct {
-	Name              string
-	Objective         string
-	DailyBudget       float64
-	Currency          string
-	StartDate         time.Time
-	EndDate           time.Time
-	CTA               string
-	AdAccountIDs      []string
-	BidStrategy       string
-	BidCap            float64
-	PacingType        string
-	FrequencyCap      int
-	FrequencyCapUnit  string
-	Targeting         map[string]any
-	Creative          *integrations.CreativeSpec
-	Variants          []integrations.VariantSpec
-	Provenance        map[string]string
-
-	// Legacy backward compat – if present these are auto-wrapped into Variants.
-	// Using Variants directly is preferred.
+	Name             string
+	Objective        string
+	DailyBudget      float64
+	Currency         string
+	StartDate        time.Time
+	EndDate          time.Time
+	CTA              string
+	AdAccountIDs     []string
+	Platforms        []string
+	BidStrategy      string
+	BidCap           float64
+	PacingType       string
+	FrequencyCap     int
+	FrequencyCapUnit string
+	Targeting        map[string]any
+	Creative         *integrations.CreativeSpec
+	Variants         []integrations.VariantSpec
+	Provenance       map[string]string
+	Rationale        map[string]string
 }
 
 // CreatedCampaignResult is one persisted campaign plus the platform it targets.
@@ -113,8 +113,8 @@ func ValidateCreateInput(in CreateCampaignInput) error {
 	if in.DailyBudget < MinDailyBudget || in.DailyBudget > MaxDailyBudget {
 		return ValidationError{fmt.Sprintf("daily_budget must be between %.0f and %.0f", MinDailyBudget, MaxDailyBudget)}
 	}
-	if len(in.AdAccountIDs) == 0 {
-		return ValidationError{"at least one ad account is required"}
+	if len(in.AdAccountIDs) == 0 && len(in.Platforms) == 0 {
+		return ValidationError{"at least one ad account (ad_account_ids) or platform (platforms) is required"}
 	}
 	for _, id := range in.AdAccountIDs {
 		if _, err := uuid.Parse(strings.TrimSpace(id)); err != nil {
@@ -163,6 +163,9 @@ func ValidateCreateInput(in CreateCampaignInput) error {
 			if !looksLikeURL(v.Creative.ImageURL) {
 				return ValidationError{fmt.Sprintf("variants[%d].creative.image_url must be a valid http(s) URL", i)}
 			}
+			if v.Creative.Format != "" && !integrations.ValidCreativeFormat(v.Creative.Format) {
+				return ValidationError{fmt.Sprintf("variants[%d].creative.format must be one of: image, video, gif, audio, playable", i)}
+			}
 		}
 	} else {
 		if !looksLikeURL(in.Creative.LinkURL) {
@@ -173,6 +176,9 @@ func ValidateCreateInput(in CreateCampaignInput) error {
 		}
 		if !looksLikeURL(in.Creative.ImageURL) {
 			return ValidationError{"creative.image_url must be a valid http(s) URL"}
+		}
+		if in.Creative.Format != "" && !integrations.ValidCreativeFormat(in.Creative.Format) {
+			return ValidationError{"creative.format must be one of: image, video, gif, audio, playable"}
 		}
 	}
 	return nil
@@ -194,8 +200,22 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 		return CreateResult{}, fmt.Errorf("load ad accounts: %w", err)
 	}
 	byID := make(map[string]db.AdAccount, len(accounts))
+	byPlatform := make(map[string][]db.AdAccount)
 	for _, a := range accounts {
 		byID[formatUUID(a.ID)] = a
+		byPlatform[a.Platform] = append(byPlatform[a.Platform], a)
+	}
+
+	accountIDs := dedupe(in.AdAccountIDs)
+	if len(accountIDs) == 0 {
+		// Resolve from the requested platforms so "platforms: [meta]" fans out
+		// over every connected account for that driver.
+		for _, p := range dedupe(in.Platforms) {
+			for _, a := range byPlatform[p] {
+				accountIDs = append(accountIDs, formatUUID(a.ID))
+			}
+		}
+		accountIDs = dedupe(accountIDs)
 	}
 
 	spec := integrations.CampaignSpec{
@@ -219,6 +239,11 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 	} else {
 		spec.Variants = []integrations.VariantSpec{{Targeting: in.Targeting, Creative: in.Creative}}
 	}
+	if f := spec.FirstVariantCreative(); f != nil && f.Format != "" {
+		spec.Format = f.Format
+	} else if spec.Creative != nil {
+		spec.Format = spec.Creative.Format
+	}
 	if spec.BidStrategy == "" {
 		spec.BidStrategy = integrations.BidStrategyLowestCostWithoutCap
 	}
@@ -230,9 +255,10 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 	creativeJSON := marshalCreative(in.Creative)
 	variantsJSON, _ := json.Marshal(spec.Variants)
 	provenanceJSON := marshalProvenance(in.Provenance, "user")
+	rationaleJSON := marshalRationale(in.Rationale)
 
 	var result CreateResult
-	for _, accountID := range dedupe(in.AdAccountIDs) {
+	for _, accountID := range accountIDs {
 		account, ok := byID[accountID]
 		if !ok {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("ad account %s is not connected to this workspace; skipped", accountID))
@@ -279,6 +305,7 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 			FrequencyCapTimeUnit: textOrNull(spec.FrequencyCapUnit),
 			Variants:             variantsJSON,
 			Provenance:           provenanceJSON,
+			Rationale:            rationaleJSON,
 		})
 		if err != nil {
 			slog.Error("failed to persist campaign", "platform", account.Platform, "error", err)
@@ -506,6 +533,34 @@ func (s *CampaignService) UpdateProvenance(ctx context.Context, workspaceID, cam
 	})
 }
 
+// UpdateRationale merges per-field rationale strings (keyed by path, e.g.
+// "variants[0].targeting.geo") into a campaign's rationale JSON.
+func (s *CampaignService) UpdateRationale(ctx context.Context, workspaceID, campaignID uuid.UUID, overrides map[string]string) (db.Campaign, error) {
+	camp, err := s.queries.GetCampaignByIDForWorkspace(ctx, db.GetCampaignByIDForWorkspaceParams{
+		ID:          pgtype.UUID{Bytes: campaignID, Valid: true},
+		WorkspaceID: pgtype.UUID{Bytes: workspaceID, Valid: true},
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.Campaign{}, ErrCampaignNotFound
+		}
+		return db.Campaign{}, fmt.Errorf("load campaign: %w", err)
+	}
+
+	existing := make(map[string]string)
+	if len(camp.Rationale) > 0 {
+		_ = json.Unmarshal(camp.Rationale, &existing)
+	}
+	for k, v := range overrides {
+		existing[k] = v
+	}
+	merged, _ := json.Marshal(existing)
+	return s.queries.UpdateCampaignRationale(ctx, db.UpdateCampaignRationaleParams{
+		ID:        pgtype.UUID{Bytes: campaignID, Valid: true},
+		Rationale: merged,
+	})
+}
+
 func (s *CampaignService) ensureDeliverable(ctx context.Context, adapter integrations.CampaignCreator, account db.AdAccount, spec integrations.CampaignSpec, have integrations.DeliverableState) (integrations.DeliverableState, error) {
 	token, err := crypto.DecryptToken(account.AccessTokenEncrypted, s.encKey)
 	if err != nil {
@@ -540,6 +595,9 @@ func specFromCampaign(camp db.Campaign, budget float64) integrations.CampaignSpe
 		}
 	}
 	spec.Creative = unmarshalCreative(camp.Creative)
+	if spec.Creative != nil && spec.Creative.Format != "" {
+		spec.Format = spec.Creative.Format
+	}
 	return spec
 }
 
@@ -612,6 +670,14 @@ func marshalProvenance(m map[string]string, defaultValue string) []byte {
 		}
 	}
 	b, _ := json.Marshal(clone)
+	return b
+}
+
+func marshalRationale(m map[string]string) []byte {
+	if len(m) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(m)
 	return b
 }
 

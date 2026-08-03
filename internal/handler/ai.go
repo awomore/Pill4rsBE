@@ -115,6 +115,7 @@ func creativeFromProposed(cr *ai.ProposedCreative) *integrations.CreativeSpec {
 		Description: cr.Description,
 		LinkURL:     cr.LinkURL,
 		ImageURL:    cr.ImageURL,
+		Format:      cr.Format,
 	}
 }
 

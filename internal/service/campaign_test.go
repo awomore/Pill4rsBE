@@ -79,6 +79,20 @@ func TestValidateCreateInput(t *testing.T) {
 			in.FrequencyCap = 5
 			in.FrequencyCapUnit = "month"
 		}, true},
+		{"platforms instead of ad accounts", func(in *CreateCampaignInput) {
+			in.AdAccountIDs = nil
+			in.Platforms = []string{"meta"}
+		}, false},
+		{"neither ad accounts nor platforms", func(in *CreateCampaignInput) {
+			in.AdAccountIDs = nil
+			in.Platforms = nil
+		}, true},
+		{"invalid creative format", func(in *CreateCampaignInput) {
+			in.Creative.Format = "hologram"
+		}, true},
+		{"valid creative format", func(in *CreateCampaignInput) {
+			in.Creative.Format = "video"
+		}, false},
 	}
 
 	for _, tt := range tests {

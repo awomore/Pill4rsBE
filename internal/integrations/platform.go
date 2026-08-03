@@ -2,6 +2,9 @@ package integrations
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -72,13 +75,106 @@ func ValidObjective(o string) bool {
 }
 
 // CreativeSpec describes the ad creative (copy + destination + media). On most
-// platforms this lives on an ad-creative object below the campaign.
+// platforms this lives on an ad-creative object below the campaign. Format is the
+// media type the creative carries: image, video, gif, audio, or playable.
 type CreativeSpec struct {
 	PrimaryText string `json:"primary_text"`
 	Headline    string `json:"headline"`
 	Description string `json:"description"`
 	LinkURL     string `json:"link_url"`
 	ImageURL    string `json:"image_url"`
+	Format      string `json:"format,omitempty"`
+}
+
+// ValidCreativeFormat reports whether f is a known creative format.
+func ValidCreativeFormat(f string) bool {
+	switch f {
+	case "image", "video", "gif", "audio", "playable":
+		return true
+	default:
+		return false
+	}
+}
+
+// normalizeGenderAliases maps the many input spellings of a gender onto the
+// canonical lowercase name ("female", "male", "unknown").
+var normalizeGenderAliases = map[string]string{
+	"f": "female", "female": "female", "women": "female", "woman": "female", "2": "female",
+	"m": "male", "male": "male", "men": "male", "man": "male", "1": "male",
+	"unknown": "unknown", "all": "unknown", "0": "unknown",
+}
+
+// GenderValues normalizes an arbitrary genders value (from Meta 1/2 ints, or
+// strings like "female"/"male") onto a canonical set of lowercase names. It
+// returns nil when genders are effectively unconstrained (unset or "all").
+func GenderValues(raw any) []string {
+	switch v := raw.(type) {
+	case []string:
+		return normalizeGenderStrings(v)
+	case []any:
+		ss := make([]string, 0, len(v))
+		for _, e := range v {
+			ss = append(ss, fmt.Sprint(e))
+		}
+		return normalizeGenderStrings(ss)
+	case []int:
+		ss := make([]string, 0, len(v))
+		for _, e := range v {
+			ss = append(ss, strconv.Itoa(e))
+		}
+		return normalizeGenderStrings(ss)
+	case string:
+		return normalizeGenderStrings([]string{v})
+	}
+	return nil
+}
+
+func normalizeGenderStrings(in []string) []string {
+	set := make(map[string]struct{}, len(in))
+	for _, s := range in {
+		n, ok := normalizeGenderAliases[strings.ToLower(strings.TrimSpace(s))]
+		if !ok || n == "unknown" {
+			continue
+		}
+		set[n] = struct{}{}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, 2)
+	for _, g := range []string{"male", "female"} {
+		if _, ok := set[g]; ok {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// MetaGenderCodes maps canonical gender names to Meta's gender targeting ints.
+func MetaGenderCodes(genders []string) []int {
+	if len(genders) == 0 {
+		return nil
+	}
+	codes := make([]int, 0, len(genders))
+	for _, g := range genders {
+		switch g {
+		case "male":
+			codes = append(codes, 1)
+		case "female":
+			codes = append(codes, 2)
+		}
+	}
+	if len(codes) == 2 {
+		// both male and female = everyone; omit so Meta targets all.
+		return nil
+	}
+	return codes
+}
+
+// TikTokGenderCodes maps canonical gender values to TikTok's gender codes
+// (1 = male, 2 = female; omit to target all).
+func TikTokGenderCodes(genders []string) []int {
+	return MetaGenderCodes(genders)
 }
 
 // BidStrategy constants.
@@ -123,19 +219,20 @@ type VariantSpec struct {
 // Targeting and Creative live under Variants so a future multi-variant UI
 // (e.g. "Ikeja vs Lekki") slots in without a migration.
 type CampaignSpec struct {
-	Name              string
-	Objective         CampaignObjective
-	DailyBudget       float64
-	Currency          string
-	StartDate         time.Time
-	EndDate           time.Time
-	CTA               string
-	BidStrategy       string
-	BidCap            float64
-	PacingType        string
-	FrequencyCap      int
-	FrequencyCapUnit  string
-	Variants          []VariantSpec
+	Name             string
+	Objective        CampaignObjective
+	DailyBudget      float64
+	Currency         string
+	StartDate        time.Time
+	EndDate          time.Time
+	CTA              string
+	BidStrategy      string
+	BidCap           float64
+	PacingType       string
+	FrequencyCap     int
+	FrequencyCapUnit string
+	Format           string
+	Variants         []VariantSpec
 
 	// Deprecated, kept for backwards compat with existing platform adapters
 	// during migration. Prefer Variants[0].Targeting / Variants[0].Creative.
@@ -164,26 +261,26 @@ func (s CampaignSpec) FirstVariantCreative() *CreativeSpec {
 // ForecastSpec is the input for a reach/spend estimate. It carries only the
 // fields that affect delivery (no name, no creative, no campaign ID).
 type ForecastSpec struct {
-	Platform      string         `json:"platform"`
-	AdAccountID   string         `json:"ad_account_id"`
-	Objective     string         `json:"objective"`
-	DailyBudget   float64        `json:"daily_budget"`
-	Currency      string         `json:"currency"`
-	Targeting     map[string]any `json:"targeting"`
-	BidStrategy   string         `json:"bid_strategy,omitempty"`
-	BidCap        float64        `json:"bid_cap,omitempty"`
-	StartDate     string         `json:"start_date,omitempty"`
-	EndDate       string         `json:"end_date,omitempty"`
+	Platform    string         `json:"platform"`
+	AdAccountID string         `json:"ad_account_id"`
+	Objective   string         `json:"objective"`
+	DailyBudget float64        `json:"daily_budget"`
+	Currency    string         `json:"currency"`
+	Targeting   map[string]any `json:"targeting"`
+	BidStrategy string         `json:"bid_strategy,omitempty"`
+	BidCap      float64        `json:"bid_cap,omitempty"`
+	StartDate   string         `json:"start_date,omitempty"`
+	EndDate     string         `json:"end_date,omitempty"`
 }
 
 // ForecastResult is the estimated reach/spend for a draft targeting spec.
 type ForecastResult struct {
-	EstimatedReach        int64   `json:"estimated_reach"`
-	EstimatedImpressions  int64   `json:"estimated_impressions"`
-	EstimatedSpend        float64 `json:"estimated_spend"`
-	EstimatedCPM          float64 `json:"estimated_cpm"`
-	EstimatedClicks       int64   `json:"estimated_clicks"`
-	Currency              string  `json:"currency"`
+	EstimatedReach       int64   `json:"estimated_reach"`
+	EstimatedImpressions int64   `json:"estimated_impressions"`
+	EstimatedSpend       float64 `json:"estimated_spend"`
+	EstimatedCPM         float64 `json:"estimated_cpm"`
+	EstimatedClicks      int64   `json:"estimated_clicks"`
+	Currency             string  `json:"currency"`
 }
 
 // CampaignForecaster provides delivery estimates for an unsaved targeting spec.
