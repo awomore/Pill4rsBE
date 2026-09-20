@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"math"
 	"math/big"
 	"strconv"
 	"strings"
@@ -19,6 +20,8 @@ type SyncService struct {
 	queries *db.Queries
 	encKey  string
 	sources map[string]integrations.CampaignDataSource
+	wallet  *WalletService
+	guard   *SpendGuard
 }
 
 // NewSyncService indexes the supplied data sources by platform; sync iterates
@@ -30,6 +33,14 @@ func NewSyncService(queries *db.Queries, encKey string, sources ...integrations.
 		m[src.Platform()] = src
 	}
 	return &SyncService{queries: queries, encKey: encKey, sources: m}
+}
+
+// SetBilling wires the wallet and spend guard so a sync also charges the 10%
+// commission on tracked spend (and the media spend itself for managed accounts),
+// then hard-pauses the workspace if the balance is exhausted.
+func (s *SyncService) SetBilling(wallet *WalletService, guard *SpendGuard) {
+	s.wallet = wallet
+	s.guard = guard
 }
 
 // SyncSummary is the result of a sync run.
@@ -118,7 +129,7 @@ func (s *SyncService) SyncWorkspace(ctx context.Context, workspaceID uuid.UUID) 
 				if ni.Date.IsZero() {
 					continue
 				}
-				_, err := s.queries.UpsertPerformanceSnapshot(ctx, db.UpsertPerformanceSnapshotParams{
+				snap, err := s.queries.UpsertPerformanceSnapshot(ctx, db.UpsertPerformanceSnapshotParams{
 					CampaignID:  dbCamp.ID,
 					Date:        pgtype.Date{Time: ni.Date, Valid: true},
 					Spend:       numericFromFloat(ni.Spend),
@@ -137,11 +148,107 @@ func (s *SyncService) SyncWorkspace(ctx context.Context, workspaceID uuid.UUID) 
 					continue
 				}
 				summary.Snapshots++
+				s.chargeCommission(ctx, pgWID, acct, snap)
 			}
 		}
 	}
 
+	if s.guard != nil {
+		s.guard.Enforce(ctx, workspaceID)
+	}
+
 	return summary, nil
+}
+
+// chargeCommission debits the wallet for a snapshot's spend: always the
+// workspace commission (default 10%), plus the media spend itself for managed
+// accounts (where Pill4rs is the payer). It is idempotent per snapshot, so
+// re-running a sync never double-charges.
+func (s *SyncService) chargeCommission(ctx context.Context, workspaceID pgtype.UUID, acct db.AdAccount, snap db.PerformanceSnapshot) {
+	if s.wallet == nil {
+		return
+	}
+	spend, ok := numericToFloat(snap.Spend)
+	if !ok || spend <= 0 {
+		return
+	}
+
+	chargeCurrency := strings.ToUpper(strings.TrimSpace(acct.Currency))
+	var fx *float64
+	if chargeCurrency != CurrencyUSD && chargeCurrency != CurrencyNGN {
+		rate := 1.0
+		fx = &rate
+		chargeCurrency = CurrencyUSD
+	}
+
+	baseMinor := int64(math.Round(spend * 100))
+	if baseMinor <= 0 {
+		return
+	}
+
+	rateBps := int32(1000)
+	if ws, err := s.queries.GetWorkspaceByID(ctx, workspaceID); err == nil && ws.CommissionRateBps > 0 {
+		rateBps = ws.CommissionRateBps
+	}
+	commissionMinor := commissionMinorFor(baseMinor, rateBps)
+	if commissionMinor <= 0 {
+		return
+	}
+
+	wsID := uuidFromPG(workspaceID)
+	snapID := uuidFromPG(snap.ID)
+
+	if _, err := s.queries.InsertCommission(ctx, db.InsertCommissionParams{
+		WorkspaceID:     workspaceID,
+		AdAccountID:     acct.ID,
+		SnapshotID:      snap.ID,
+		Currency:        chargeCurrency,
+		BaseMinor:       baseMinor,
+		RateBps:         rateBps,
+		CommissionMinor: commissionMinor,
+		FxRate:          numericOrNullPtr(fx),
+	}); err != nil {
+		slog.Error("sync: record commission failed", "snapshot", snapID, "error", err)
+		return
+	}
+
+	if _, err := s.wallet.Debit(ctx, LedgerEntry{
+		WorkspaceID:    wsID,
+		Currency:       chargeCurrency,
+		Kind:           TxKindCommission,
+		AmountMinor:    commissionMinor,
+		IdempotencyKey: "commission:" + snapID.String(),
+		SourceType:     "snapshot",
+		SourceID:       snapID.String(),
+		FxRate:         fx,
+		Metadata:       map[string]any{"rate_bps": rateBps, "base_minor": baseMinor},
+	}); err != nil {
+		slog.Error("sync: commission debit failed", "snapshot", snapID, "error", err)
+	}
+
+	if acct.BillingMode == "managed" {
+		if _, err := s.wallet.Debit(ctx, LedgerEntry{
+			WorkspaceID:    wsID,
+			Currency:       chargeCurrency,
+			Kind:           TxKindMediaSpend,
+			AmountMinor:    baseMinor,
+			IdempotencyKey: "media_spend:" + snapID.String(),
+			SourceType:     "snapshot",
+			SourceID:       snapID.String(),
+			FxRate:         fx,
+		}); err != nil {
+			slog.Error("sync: media spend debit failed", "snapshot", snapID, "error", err)
+		}
+	}
+}
+
+// commissionMinorFor returns the commission in minor units for a base spend in
+// minor units at rateBps basis points (1000 = 10%), rounded half-up.
+func commissionMinorFor(baseMinor int64, rateBps int32) int64 {
+	if baseMinor <= 0 || rateBps <= 0 {
+		return 0
+	}
+	return (baseMinor*int64(rateBps) + 5000) / 10000
 }
 
 func textOrNull(s string) pgtype.Text {

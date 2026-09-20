@@ -48,6 +48,15 @@ cp .env.example .env
 | `GOOGLE_ADS_DEVELOPER_TOKEN` | no | Google Ads API developer token (required to enable the Google Ads integration; reuses `GOOGLE_CLIENT_ID`/`SECRET` for OAuth). |
 | `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | no | Google Ads manager (MCC) customer id, if applicable. |
 | `GOOGLE_ADS_REDIRECT_URI` | no | Google Ads OAuth callback, e.g. `http://localhost:8080/api/integrations/google/callback`. |
+| `STORAGE_DRIVER` | no | Media storage driver. `local` (default) writes to `MEDIA_DIR`; an S3/R2 adapter plugs in behind the same interface. |
+| `MEDIA_DIR` | no | Local directory for uploaded creative media (default `media`). |
+| `MEDIA_PUBLIC_BASE_URL` | no | Public base URL used to build media URLs for ad platforms (default `http://localhost:<PORT>`). |
+| `COMMISSION_RATE_BPS` | no | Commission charged on tracked ad spend, in basis points (default `1000` = 10%). |
+| `FLUTTERWAVE_SECRET_KEY` | no | Flutterwave secret key. Without it, `POST /api/wallet/checkout` is disabled. |
+| `FLUTTERWAVE_WEBHOOK_SECRET_HASH` | no | Secret hash configured for the Flutterwave webhook (`verif-hash`). |
+| `FLUTTERWAVE_BASE_URL` | no | Flutterwave API base URL (default `https://api.flutterwave.com/v3`). |
+| `ZERNIO_API_KEY` | no | Zernio API key. Enables ads on LinkedIn, Pinterest, X and OpenAI Ads (and Zernio-managed Meta/Google/TikTok). |
+| `ZERNIO_BASE_URL` | no | Zernio API base URL (default `https://zernio.com/api`). |
 
 The server refuses to start if any required variable is missing.
 
@@ -156,6 +165,9 @@ All errors are returned as `{ "error": "message" }`. Authenticated routes requir
 | `GET` | `/api/integrations/meta/connect` · `/callback` | Meta OAuth connect flow. |
 | `GET` | `/api/integrations/tiktok/connect` · `/callback` | TikTok OAuth connect flow. |
 | `GET` | `/api/integrations/google/connect` · `/callback` | Google Ads OAuth connect flow. |
+| `GET` | `/api/integrations/zernio/connect?platform=linkedin` | Start Zernio ads OAuth for a network; returns the auth URL. |
+| `GET` | `/api/integrations/zernio/callback` · `/callback/:profile_id` | Zernio OAuth callback; syncs the connected ad accounts. |
+| `POST` | `/api/integrations/zernio/sync` | Re-sync Zernio accounts into the workspace. |
 | `GET` | `/api/integrations/accounts/:id/options` | A Meta account's pages + pixels (for ad delivery). |
 | `PATCH` | `/api/integrations/accounts/:id` | Set a Meta account's `page_id` / `pixel_id`. |
 | `DELETE` | `/api/integrations/accounts/:id` | Disconnect a single connected ad account. |
@@ -168,6 +180,17 @@ All errors are returned as `{ "error": "message" }`. Authenticated routes requir
 | `GET` | `/api/campaigns/:id/health` | Oma's health card: what / why / recommendation (+ a one-click fix if any). |
 | `POST` | `/api/campaigns/:id/health/apply` | Apply the recommended fix (audited Oma action via the approval engine). |
 | `POST` | `/api/ai/campaign/propose` | Oma turns a brief + the picked `ad_account_ids` into a campaign **proposal** (pending action) to review. |
+| `POST` | `/api/ai/review` | Oma reviews every campaign across all platforms; queues recommended actions (`propose:false` for read-only, `auto_apply:true` to execute). |
 | `GET` | `/api/actions` | The propose → review → approve queue (with outcomes). |
 | `POST` | `/api/actions/:id/approve` · `/reject` | Approve (executes via the shared campaign engine) or reject a proposal. |
 | `GET` | `/api/dashboard/summary?range=7d\|30d\|90d` | Aggregated performance, daily series, per-campaign breakdown. |
+| `GET` | `/api/wallet` | Wallet status and USD/NGN balances. |
+| `GET` | `/api/wallet/transactions` | Wallet ledger (top-ups, spend, commission), newest first. |
+| `POST` | `/api/wallet/topup` | Credit the wallet from a provider reference (idempotent). |
+| `POST` | `/api/wallet/checkout` | Create a Flutterwave payment link for a wallet top-up. |
+| `POST` | `/api/webhooks/flutterwave` | Flutterwave webhook; verifies and credits the wallet on successful payment (unauthenticated, `verif-hash` verified). |
+| `GET` / `POST` | `/api/media` | List / upload creative images and videos (multipart `file`). |
+| `DELETE` | `/api/media/:id` | Delete a media asset. |
+| `PATCH` | `/api/integrations/accounts/:id/billing` | Set an account's billing mode (`byob`\|`managed`), payer, currency, and spend limit. |
+| `GET` | `/api/platforms` | Ad-platform matrix (availability, capabilities) plus this workspace's connection state. |
+| `GET` | `/api/platforms/capabilities` | Static per-platform capability matrix. |

@@ -87,34 +87,63 @@ func (c *Client) EnsureDeliverable(ctx context.Context, accessToken string, acco
 
 	if state.CreativeID == "" {
 		cr := spec.FirstVariantCreative()
-		if cr == nil || cr.ImageURL == "" {
-			return state, fmt.Errorf("creative image is required")
+		if cr == nil {
+			return state, fmt.Errorf("creative media is required")
 		}
-		data, err := c.post(ctx, "/file/image/ad/upload/", accessToken, map[string]any{
-			"advertiser_id": account.AccountID,
-			"upload_type":   "UPLOAD_BY_URL",
-			"image_url":     cr.ImageURL,
-		})
-		if err != nil {
-			return state, err
+		if cr.Format == "video" && cr.VideoURL != "" {
+			data, err := c.post(ctx, "/file/video/ad/upload/", accessToken, map[string]any{
+				"advertiser_id": account.AccountID,
+				"upload_type":   "UPLOAD_BY_URL",
+				"video_url":     cr.VideoURL,
+			})
+			if err != nil {
+				return state, err
+			}
+			var out struct {
+				VideoID string `json:"video_id"`
+			}
+			if err := json.Unmarshal(data, &out); err != nil {
+				return state, fmt.Errorf("decode video: %w", err)
+			}
+			if out.VideoID == "" {
+				return state, fmt.Errorf("video upload returned no video id")
+			}
+			state.CreativeID = out.VideoID
+		} else {
+			if cr.ImageURL == "" {
+				return state, fmt.Errorf("creative image is required")
+			}
+			data, err := c.post(ctx, "/file/image/ad/upload/", accessToken, map[string]any{
+				"advertiser_id": account.AccountID,
+				"upload_type":   "UPLOAD_BY_URL",
+				"image_url":     cr.ImageURL,
+			})
+			if err != nil {
+				return state, err
+			}
+			var out struct {
+				ImageID string `json:"image_id"`
+			}
+			if err := json.Unmarshal(data, &out); err != nil {
+				return state, fmt.Errorf("decode image: %w", err)
+			}
+			state.CreativeID = out.ImageID
 		}
-		var out struct {
-			ImageID string `json:"image_id"`
-		}
-		if err := json.Unmarshal(data, &out); err != nil {
-			return state, fmt.Errorf("decode image: %w", err)
-		}
-		state.CreativeID = out.ImageID
 	}
 
 	if state.AdID == "" {
+		cr := spec.FirstVariantCreative()
 		creative := map[string]any{
 			"ad_name":          spec.Name + " - ad",
 			"ad_format":        adFormat(spec),
-			"image_ids":        []string{state.CreativeID},
 			"ad_text":          creativeText(spec),
 			"call_to_action":   ctaOrDefault(spec.CTA),
 			"landing_page_url": creativeLink(spec),
+		}
+		if cr != nil && cr.Format == "video" {
+			creative["video_id"] = state.CreativeID
+		} else {
+			creative["image_ids"] = []string{state.CreativeID}
 		}
 		data, err := c.post(ctx, "/ad/create/", accessToken, map[string]any{
 			"advertiser_id":    account.AccountID,
@@ -170,8 +199,11 @@ func ctaOrDefault(cta string) string {
 }
 
 // adFormat maps the normalized creative format to TikTok's ad_format value.
-// Only image uploads are wired end-to-end; non-image formats fall back to
-// SINGLE_IMAGE until a video/audio upload path exists.
+// Images and videos are both uploaded by URL before ad creation.
 func adFormat(spec integrations.CampaignSpec) string {
+	cr := spec.FirstVariantCreative()
+	if cr != nil && cr.Format == "video" {
+		return "SINGLE_VIDEO"
+	}
 	return "SINGLE_IMAGE"
 }

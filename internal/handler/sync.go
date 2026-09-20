@@ -86,16 +86,16 @@ func latestSnapshotMap(r db.GetCampaignsWithLatestSnapshotRow) interface{} {
 		return nil
 	}
 	snap := map[string]interface{}{
-		"impressions": r.Impressions.Int64,
-		"clicks":      r.Clicks.Int64,
-		"conversions": r.Conversions.Int64,
-		"reach":       r.Reach.Int64,
+		"impressions": r.Impressions,
+		"clicks":      r.Clicks,
+		"conversions": r.Conversions,
+		"reach":       r.Reach,
 	}
 	if r.SnapshotDate.Valid {
 		snap["date"] = r.SnapshotDate.Time.Format("2006-01-02")
 	}
-	if r.Currency.Valid {
-		snap["currency"] = r.Currency.String
+	if r.Currency != "" {
+		snap["currency"] = r.Currency
 	}
 	for key, val := range map[string]pgtype.Numeric{
 		"spend": r.Spend,

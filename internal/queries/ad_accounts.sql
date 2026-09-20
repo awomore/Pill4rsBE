@@ -36,3 +36,12 @@ DELETE FROM ad_accounts WHERE id = $1;
 
 -- name: DeleteAdAccountByWorkspaceAndPlatform :exec
 DELETE FROM ad_accounts WHERE workspace_id = $1 AND platform = $2;
+
+-- name: SetAdAccountBilling :one
+UPDATE ad_accounts
+SET billing_mode = $2, payer = $3, payment_instrument = $4, currency = $5, spend_limit_minor = $6
+WHERE id = $1
+RETURNING *;
+
+-- name: GetAdAccountsByWorkspaceAndBillingMode :many
+SELECT * FROM ad_accounts WHERE workspace_id = $1 AND billing_mode = $2;

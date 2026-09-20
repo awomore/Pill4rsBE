@@ -62,6 +62,159 @@ func (q *Queries) GetAggregatedSummaryByWorkspace(ctx context.Context, arg GetAg
 	return i, err
 }
 
+const getDashboardCampaignBreakdown = `-- name: GetDashboardCampaignBreakdown :many
+SELECT
+    c.id AS campaign_id,
+    c.name AS name,
+    c.status AS status,
+    COALESCE(SUM(ps.spend), 0)::numeric AS spend,
+    COALESCE(SUM(ps.impressions), 0)::bigint AS impressions,
+    COALESCE(SUM(ps.clicks), 0)::bigint AS clicks,
+    COALESCE(SUM(ps.conversions), 0)::bigint AS conversions,
+    COALESCE(AVG(ps.roas), 0)::numeric AS average_roas,
+    COALESCE(AVG(ps.cpc), 0)::numeric AS average_cpc
+FROM campaigns c
+LEFT JOIN performance_snapshots ps
+    ON ps.campaign_id = c.id AND ps.date >= $2 AND ps.date <= $3
+WHERE c.workspace_id = $1
+GROUP BY c.id, c.name, c.status
+ORDER BY spend DESC
+`
+
+type GetDashboardCampaignBreakdownParams struct {
+	WorkspaceID pgtype.UUID
+	Date        pgtype.Date
+	Date_2      pgtype.Date
+}
+
+type GetDashboardCampaignBreakdownRow struct {
+	CampaignID  pgtype.UUID
+	Name        string
+	Status      string
+	Spend       pgtype.Numeric
+	Impressions int64
+	Clicks      int64
+	Conversions int64
+	AverageRoas pgtype.Numeric
+	AverageCpc  pgtype.Numeric
+}
+
+func (q *Queries) GetDashboardCampaignBreakdown(ctx context.Context, arg GetDashboardCampaignBreakdownParams) ([]GetDashboardCampaignBreakdownRow, error) {
+	rows, err := q.db.Query(ctx, getDashboardCampaignBreakdown, arg.WorkspaceID, arg.Date, arg.Date_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetDashboardCampaignBreakdownRow
+	for rows.Next() {
+		var i GetDashboardCampaignBreakdownRow
+		if err := rows.Scan(
+			&i.CampaignID,
+			&i.Name,
+			&i.Status,
+			&i.Spend,
+			&i.Impressions,
+			&i.Clicks,
+			&i.Conversions,
+			&i.AverageRoas,
+			&i.AverageCpc,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getDashboardDailySeries = `-- name: GetDashboardDailySeries :many
+SELECT
+    ps.date AS date,
+    COALESCE(SUM(ps.spend), 0)::numeric AS spend,
+    COALESCE(SUM(ps.conversions), 0)::bigint AS conversions
+FROM performance_snapshots ps
+JOIN campaigns c ON ps.campaign_id = c.id
+WHERE c.workspace_id = $1 AND ps.date >= $2 AND ps.date <= $3
+GROUP BY ps.date
+ORDER BY ps.date
+`
+
+type GetDashboardDailySeriesParams struct {
+	WorkspaceID pgtype.UUID
+	Date        pgtype.Date
+	Date_2      pgtype.Date
+}
+
+type GetDashboardDailySeriesRow struct {
+	Date        pgtype.Date
+	Spend       pgtype.Numeric
+	Conversions int64
+}
+
+func (q *Queries) GetDashboardDailySeries(ctx context.Context, arg GetDashboardDailySeriesParams) ([]GetDashboardDailySeriesRow, error) {
+	rows, err := q.db.Query(ctx, getDashboardDailySeries, arg.WorkspaceID, arg.Date, arg.Date_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetDashboardDailySeriesRow
+	for rows.Next() {
+		var i GetDashboardDailySeriesRow
+		if err := rows.Scan(&i.Date, &i.Spend, &i.Conversions); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getDashboardTotals = `-- name: GetDashboardTotals :one
+SELECT
+    COALESCE(SUM(ps.spend), 0)::numeric AS total_spend,
+    COALESCE(SUM(ps.impressions), 0)::bigint AS total_impressions,
+    COALESCE(SUM(ps.clicks), 0)::bigint AS total_clicks,
+    COALESCE(SUM(ps.conversions), 0)::bigint AS total_conversions,
+    COALESCE(AVG(ps.roas), 0)::numeric AS average_roas,
+    COALESCE(AVG(ps.cpc), 0)::numeric AS average_cpc
+FROM performance_snapshots ps
+JOIN campaigns c ON ps.campaign_id = c.id
+WHERE c.workspace_id = $1 AND ps.date >= $2 AND ps.date <= $3
+`
+
+type GetDashboardTotalsParams struct {
+	WorkspaceID pgtype.UUID
+	Date        pgtype.Date
+	Date_2      pgtype.Date
+}
+
+type GetDashboardTotalsRow struct {
+	TotalSpend       pgtype.Numeric
+	TotalImpressions int64
+	TotalClicks      int64
+	TotalConversions int64
+	AverageRoas      pgtype.Numeric
+	AverageCpc       pgtype.Numeric
+}
+
+func (q *Queries) GetDashboardTotals(ctx context.Context, arg GetDashboardTotalsParams) (GetDashboardTotalsRow, error) {
+	row := q.db.QueryRow(ctx, getDashboardTotals, arg.WorkspaceID, arg.Date, arg.Date_2)
+	var i GetDashboardTotalsRow
+	err := row.Scan(
+		&i.TotalSpend,
+		&i.TotalImpressions,
+		&i.TotalClicks,
+		&i.TotalConversions,
+		&i.AverageRoas,
+		&i.AverageCpc,
+	)
+	return i, err
+}
+
 const getSnapshotsByCampaignAndDateRange = `-- name: GetSnapshotsByCampaignAndDateRange :many
 SELECT id, campaign_id, date, spend, impressions, clicks, conversions, reach, cpm, cpc, ctr, roas, currency FROM performance_snapshots
 WHERE campaign_id = $1 AND date >= $2 AND date <= $3
@@ -163,157 +316,4 @@ func (q *Queries) UpsertPerformanceSnapshot(ctx context.Context, arg UpsertPerfo
 		&i.Currency,
 	)
 	return i, err
-}
-
-const getDashboardTotals = `-- name: GetDashboardTotals :one
-SELECT
-    COALESCE(SUM(ps.spend), 0)::numeric AS total_spend,
-    COALESCE(SUM(ps.impressions), 0)::bigint AS total_impressions,
-    COALESCE(SUM(ps.clicks), 0)::bigint AS total_clicks,
-    COALESCE(SUM(ps.conversions), 0)::bigint AS total_conversions,
-    COALESCE(AVG(ps.roas), 0)::numeric AS average_roas,
-    COALESCE(AVG(ps.cpc), 0)::numeric AS average_cpc
-FROM performance_snapshots ps
-JOIN campaigns c ON ps.campaign_id = c.id
-WHERE c.workspace_id = $1 AND ps.date >= $2 AND ps.date <= $3
-`
-
-type GetDashboardTotalsParams struct {
-	WorkspaceID pgtype.UUID
-	Date        pgtype.Date
-	Date_2      pgtype.Date
-}
-
-type GetDashboardTotalsRow struct {
-	TotalSpend       pgtype.Numeric
-	TotalImpressions int64
-	TotalClicks      int64
-	TotalConversions int64
-	AverageRoas      pgtype.Numeric
-	AverageCpc       pgtype.Numeric
-}
-
-func (q *Queries) GetDashboardTotals(ctx context.Context, arg GetDashboardTotalsParams) (GetDashboardTotalsRow, error) {
-	row := q.db.QueryRow(ctx, getDashboardTotals, arg.WorkspaceID, arg.Date, arg.Date_2)
-	var i GetDashboardTotalsRow
-	err := row.Scan(
-		&i.TotalSpend,
-		&i.TotalImpressions,
-		&i.TotalClicks,
-		&i.TotalConversions,
-		&i.AverageRoas,
-		&i.AverageCpc,
-	)
-	return i, err
-}
-
-const getDashboardDailySeries = `-- name: GetDashboardDailySeries :many
-SELECT
-    ps.date AS date,
-    COALESCE(SUM(ps.spend), 0)::numeric AS spend,
-    COALESCE(SUM(ps.conversions), 0)::bigint AS conversions
-FROM performance_snapshots ps
-JOIN campaigns c ON ps.campaign_id = c.id
-WHERE c.workspace_id = $1 AND ps.date >= $2 AND ps.date <= $3
-GROUP BY ps.date
-ORDER BY ps.date
-`
-
-type GetDashboardDailySeriesParams struct {
-	WorkspaceID pgtype.UUID
-	Date        pgtype.Date
-	Date_2      pgtype.Date
-}
-
-type GetDashboardDailySeriesRow struct {
-	Date        pgtype.Date
-	Spend       pgtype.Numeric
-	Conversions int64
-}
-
-func (q *Queries) GetDashboardDailySeries(ctx context.Context, arg GetDashboardDailySeriesParams) ([]GetDashboardDailySeriesRow, error) {
-	rows, err := q.db.Query(ctx, getDashboardDailySeries, arg.WorkspaceID, arg.Date, arg.Date_2)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetDashboardDailySeriesRow
-	for rows.Next() {
-		var i GetDashboardDailySeriesRow
-		if err := rows.Scan(&i.Date, &i.Spend, &i.Conversions); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getDashboardCampaignBreakdown = `-- name: GetDashboardCampaignBreakdown :many
-SELECT
-    c.id AS campaign_id,
-    c.name AS name,
-    c.status AS status,
-    COALESCE(SUM(ps.spend), 0)::numeric AS spend,
-    COALESCE(SUM(ps.impressions), 0)::bigint AS impressions,
-    COALESCE(SUM(ps.clicks), 0)::bigint AS clicks,
-    COALESCE(SUM(ps.conversions), 0)::bigint AS conversions,
-    COALESCE(AVG(ps.roas), 0)::numeric AS average_roas,
-    COALESCE(AVG(ps.cpc), 0)::numeric AS average_cpc
-FROM campaigns c
-LEFT JOIN performance_snapshots ps
-    ON ps.campaign_id = c.id AND ps.date >= $2 AND ps.date <= $3
-WHERE c.workspace_id = $1
-GROUP BY c.id, c.name, c.status
-ORDER BY spend DESC
-`
-
-type GetDashboardCampaignBreakdownParams struct {
-	WorkspaceID pgtype.UUID
-	Date        pgtype.Date
-	Date_2      pgtype.Date
-}
-
-type GetDashboardCampaignBreakdownRow struct {
-	CampaignID  pgtype.UUID
-	Name        string
-	Status      string
-	Spend       pgtype.Numeric
-	Impressions int64
-	Clicks      int64
-	Conversions int64
-	AverageRoas pgtype.Numeric
-	AverageCpc  pgtype.Numeric
-}
-
-func (q *Queries) GetDashboardCampaignBreakdown(ctx context.Context, arg GetDashboardCampaignBreakdownParams) ([]GetDashboardCampaignBreakdownRow, error) {
-	rows, err := q.db.Query(ctx, getDashboardCampaignBreakdown, arg.WorkspaceID, arg.Date, arg.Date_2)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetDashboardCampaignBreakdownRow
-	for rows.Next() {
-		var i GetDashboardCampaignBreakdownRow
-		if err := rows.Scan(
-			&i.CampaignID,
-			&i.Name,
-			&i.Status,
-			&i.Spend,
-			&i.Impressions,
-			&i.Clicks,
-			&i.Conversions,
-			&i.AverageRoas,
-			&i.AverageCpc,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }

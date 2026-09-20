@@ -13,6 +13,8 @@ func Auth(jwtSecret []byte) echo.MiddlewareFunc {
 		return func(c echo.Context) error {
 			if c.Request().Method == http.MethodOptions ||
 				c.Path() == "/health" ||
+				strings.HasPrefix(c.Path(), "/media/") ||
+				strings.HasPrefix(c.Path(), "/api/webhooks/") ||
 				strings.HasPrefix(c.Path(), "/api/auth/") {
 				return next(c)
 			}

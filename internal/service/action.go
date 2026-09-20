@@ -164,6 +164,59 @@ func (s *ActionService) ListActions(ctx context.Context, workspaceID uuid.UUID) 
 	return s.queries.ListCampaignActionsByWorkspace(ctx, pgtype.UUID{Bytes: workspaceID, Valid: true})
 }
 
+// ProposeFromReview turns Oma's workspace review into pending actions. For every
+// campaign with a recommended fix it queues a set_status or update_budget action,
+// skipping any campaign that already has a pending action of the same type so
+// repeated reviews don't stack duplicates. Returns the actions it created.
+func (s *ActionService) ProposeFromReview(ctx context.Context, workspaceID uuid.UUID, review WorkspaceReview) ([]db.CampaignAction, error) {
+	existing, err := s.queries.ListCampaignActionsByWorkspace(ctx, pgtype.UUID{Bytes: workspaceID, Valid: true})
+	if err != nil {
+		return nil, err
+	}
+	pending := make(map[string]bool)
+	for _, a := range existing {
+		if a.Status != ActionStatusProposed {
+			continue
+		}
+		var base struct {
+			CampaignID string `json:"campaign_id"`
+		}
+		if err := json.Unmarshal(a.Payload, &base); err != nil {
+			continue
+		}
+		pending[a.Type+"|"+base.CampaignID] = true
+	}
+
+	var created []db.CampaignAction
+	for _, cr := range review.Campaigns {
+		if cr.Health.Action == nil {
+			continue
+		}
+		rec := cr.Health.Action
+		key := rec.Type + "|" + cr.Campaign
+		if pending[key] {
+			continue
+		}
+
+		var action db.CampaignAction
+		var perr error
+		switch rec.Type {
+		case ActionSetStatus:
+			action, perr = s.ProposeStatusChange(ctx, workspaceID, ActorOma, cr.CampaignID, rec.Status)
+		case ActionUpdateBudget:
+			action, perr = s.ProposeBudgetChange(ctx, workspaceID, ActorOma, cr.CampaignID, rec.DailyBudget)
+		default:
+			continue
+		}
+		if perr != nil {
+			continue
+		}
+		pending[key] = true
+		created = append(created, action)
+	}
+	return created, nil
+}
+
 // ApproveAction executes a pending action via the shared CampaignService and
 // records the outcome. The spec is re-validated at execution time (defense in
 // depth — even though a human approved it).

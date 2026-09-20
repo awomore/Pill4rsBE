@@ -14,7 +14,7 @@ import (
 const createAdAccount = `-- name: CreateAdAccount :one
 INSERT INTO ad_accounts (workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name
+RETURNING id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name, billing_mode, payer, payment_instrument, currency, spend_limit_minor
 `
 
 type CreateAdAccountParams struct {
@@ -49,6 +49,11 @@ func (q *Queries) CreateAdAccount(ctx context.Context, arg CreateAdAccountParams
 		&i.PageID,
 		&i.PixelID,
 		&i.Name,
+		&i.BillingMode,
+		&i.Payer,
+		&i.PaymentInstrument,
+		&i.Currency,
+		&i.SpendLimitMinor,
 	)
 	return i, err
 }
@@ -91,7 +96,7 @@ func (q *Queries) DeleteAdAccountForWorkspace(ctx context.Context, arg DeleteAdA
 }
 
 const getAdAccountByID = `-- name: GetAdAccountByID :one
-SELECT id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name FROM ad_accounts WHERE id = $1
+SELECT id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name, billing_mode, payer, payment_instrument, currency, spend_limit_minor FROM ad_accounts WHERE id = $1
 `
 
 func (q *Queries) GetAdAccountByID(ctx context.Context, id pgtype.UUID) (AdAccount, error) {
@@ -110,12 +115,17 @@ func (q *Queries) GetAdAccountByID(ctx context.Context, id pgtype.UUID) (AdAccou
 		&i.PageID,
 		&i.PixelID,
 		&i.Name,
+		&i.BillingMode,
+		&i.Payer,
+		&i.PaymentInstrument,
+		&i.Currency,
+		&i.SpendLimitMinor,
 	)
 	return i, err
 }
 
 const getAdAccountForWorkspace = `-- name: GetAdAccountForWorkspace :one
-SELECT id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name FROM ad_accounts WHERE id = $1 AND workspace_id = $2
+SELECT id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name, billing_mode, payer, payment_instrument, currency, spend_limit_minor FROM ad_accounts WHERE id = $1 AND workspace_id = $2
 `
 
 type GetAdAccountForWorkspaceParams struct {
@@ -139,12 +149,17 @@ func (q *Queries) GetAdAccountForWorkspace(ctx context.Context, arg GetAdAccount
 		&i.PageID,
 		&i.PixelID,
 		&i.Name,
+		&i.BillingMode,
+		&i.Payer,
+		&i.PaymentInstrument,
+		&i.Currency,
+		&i.SpendLimitMinor,
 	)
 	return i, err
 }
 
 const getAdAccountsByWorkspace = `-- name: GetAdAccountsByWorkspace :many
-SELECT id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name FROM ad_accounts WHERE workspace_id = $1 ORDER BY connected_at DESC
+SELECT id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name, billing_mode, payer, payment_instrument, currency, spend_limit_minor FROM ad_accounts WHERE workspace_id = $1 ORDER BY connected_at DESC
 `
 
 func (q *Queries) GetAdAccountsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]AdAccount, error) {
@@ -169,6 +184,11 @@ func (q *Queries) GetAdAccountsByWorkspace(ctx context.Context, workspaceID pgty
 			&i.PageID,
 			&i.PixelID,
 			&i.Name,
+			&i.BillingMode,
+			&i.Payer,
+			&i.PaymentInstrument,
+			&i.Currency,
+			&i.SpendLimitMinor,
 		); err != nil {
 			return nil, err
 		}
@@ -180,9 +200,104 @@ func (q *Queries) GetAdAccountsByWorkspace(ctx context.Context, workspaceID pgty
 	return items, nil
 }
 
+const getAdAccountsByWorkspaceAndBillingMode = `-- name: GetAdAccountsByWorkspaceAndBillingMode :many
+SELECT id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name, billing_mode, payer, payment_instrument, currency, spend_limit_minor FROM ad_accounts WHERE workspace_id = $1 AND billing_mode = $2
+`
+
+type GetAdAccountsByWorkspaceAndBillingModeParams struct {
+	WorkspaceID pgtype.UUID
+	BillingMode string
+}
+
+func (q *Queries) GetAdAccountsByWorkspaceAndBillingMode(ctx context.Context, arg GetAdAccountsByWorkspaceAndBillingModeParams) ([]AdAccount, error) {
+	rows, err := q.db.Query(ctx, getAdAccountsByWorkspaceAndBillingMode, arg.WorkspaceID, arg.BillingMode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdAccount
+	for rows.Next() {
+		var i AdAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Platform,
+			&i.ExternalAccountID,
+			&i.AccessTokenEncrypted,
+			&i.RefreshTokenEncrypted,
+			&i.TokenExpiresAt,
+			&i.Status,
+			&i.ConnectedAt,
+			&i.PageID,
+			&i.PixelID,
+			&i.Name,
+			&i.BillingMode,
+			&i.Payer,
+			&i.PaymentInstrument,
+			&i.Currency,
+			&i.SpendLimitMinor,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setAdAccountBilling = `-- name: SetAdAccountBilling :one
+UPDATE ad_accounts
+SET billing_mode = $2, payer = $3, payment_instrument = $4, currency = $5, spend_limit_minor = $6
+WHERE id = $1
+RETURNING id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name, billing_mode, payer, payment_instrument, currency, spend_limit_minor
+`
+
+type SetAdAccountBillingParams struct {
+	ID                pgtype.UUID
+	BillingMode       string
+	Payer             string
+	PaymentInstrument pgtype.Text
+	Currency          string
+	SpendLimitMinor   pgtype.Int8
+}
+
+func (q *Queries) SetAdAccountBilling(ctx context.Context, arg SetAdAccountBillingParams) (AdAccount, error) {
+	row := q.db.QueryRow(ctx, setAdAccountBilling,
+		arg.ID,
+		arg.BillingMode,
+		arg.Payer,
+		arg.PaymentInstrument,
+		arg.Currency,
+		arg.SpendLimitMinor,
+	)
+	var i AdAccount
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Platform,
+		&i.ExternalAccountID,
+		&i.AccessTokenEncrypted,
+		&i.RefreshTokenEncrypted,
+		&i.TokenExpiresAt,
+		&i.Status,
+		&i.ConnectedAt,
+		&i.PageID,
+		&i.PixelID,
+		&i.Name,
+		&i.BillingMode,
+		&i.Payer,
+		&i.PaymentInstrument,
+		&i.Currency,
+		&i.SpendLimitMinor,
+	)
+	return i, err
+}
+
 const setAdAccountPageAndPixel = `-- name: SetAdAccountPageAndPixel :one
 UPDATE ad_accounts SET page_id = $2, pixel_id = $3 WHERE id = $1
-RETURNING id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name
+RETURNING id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name, billing_mode, payer, payment_instrument, currency, spend_limit_minor
 `
 
 type SetAdAccountPageAndPixelParams struct {
@@ -207,6 +322,11 @@ func (q *Queries) SetAdAccountPageAndPixel(ctx context.Context, arg SetAdAccount
 		&i.PageID,
 		&i.PixelID,
 		&i.Name,
+		&i.BillingMode,
+		&i.Payer,
+		&i.PaymentInstrument,
+		&i.Currency,
+		&i.SpendLimitMinor,
 	)
 	return i, err
 }
@@ -221,7 +341,7 @@ SET access_token_encrypted = EXCLUDED.access_token_encrypted,
     name = EXCLUDED.name,
     status = 'active',
     connected_at = now()
-RETURNING id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name
+RETURNING id, workspace_id, platform, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, status, connected_at, page_id, pixel_id, name, billing_mode, payer, payment_instrument, currency, spend_limit_minor
 `
 
 type UpsertAdAccountParams struct {
@@ -258,6 +378,11 @@ func (q *Queries) UpsertAdAccount(ctx context.Context, arg UpsertAdAccountParams
 		&i.PageID,
 		&i.PixelID,
 		&i.Name,
+		&i.BillingMode,
+		&i.Payer,
+		&i.PaymentInstrument,
+		&i.Currency,
+		&i.SpendLimitMinor,
 	)
 	return i, err
 }

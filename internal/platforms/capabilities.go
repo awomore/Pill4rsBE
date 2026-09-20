@@ -6,15 +6,17 @@ import (
 )
 
 // PlatformCapabilities is the per-platform capability matrix. Each value is
-// "supported", "partial", "unsupported", or "deprecated".
+// "supported", "partial", "unsupported", or "deprecated". Available is false for
+// roadmap platforms that have no adapter wired up yet.
 type PlatformCapabilities struct {
-	Targeting       map[string]string            `json:"targeting"`
-	Bidding         map[string]string            `json:"bidding"`
-	FrequencyCap    string                       `json:"frequency_cap"`
-	Pacing          map[string]string            `json:"pacing"`
-	Creative        map[string]string            `json:"creative"`
-	Objectives      map[string]string            `json:"objectives"`
-	Forecast        string                       `json:"forecast"`
+	Available    bool              `json:"available"`
+	Targeting    map[string]string `json:"targeting"`
+	Bidding      map[string]string `json:"bidding"`
+	FrequencyCap string            `json:"frequency_cap"`
+	Pacing       map[string]string `json:"pacing"`
+	Creative     map[string]string `json:"creative"`
+	Objectives   map[string]string `json:"objectives"`
+	Forecast     string            `json:"forecast"`
 }
 
 type CapabilitiesResponse struct {

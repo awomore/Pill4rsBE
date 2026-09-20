@@ -16,9 +16,11 @@ import (
 	"github.com/awomore/Pill4rsBE/internal/config"
 	"github.com/awomore/Pill4rsBE/internal/db"
 	"github.com/awomore/Pill4rsBE/internal/handler"
+	"github.com/awomore/Pill4rsBE/internal/integrations"
 	"github.com/awomore/Pill4rsBE/internal/integrations/google"
 	"github.com/awomore/Pill4rsBE/internal/integrations/meta"
 	"github.com/awomore/Pill4rsBE/internal/integrations/tiktok"
+	"github.com/awomore/Pill4rsBE/internal/integrations/zernio"
 	"github.com/awomore/Pill4rsBE/internal/middleware"
 	"github.com/awomore/Pill4rsBE/internal/service"
 	"github.com/golang-migrate/migrate/v4"
@@ -59,6 +61,9 @@ func main() {
 	slog.Info("migrations complete")
 
 	queries := db.New(pool)
+	walletService := service.NewWalletService(pool, queries)
+	mediaStorage := service.NewLocalStorage(cfg.MediaDir, cfg.MediaPublicBaseURL)
+	mediaService := service.NewMediaService(queries, mediaStorage)
 	authService := service.NewAuthService(queries, []byte(cfg.JWTSecret))
 	authHandler := handler.NewAuthHandler(authService, cfg)
 	workspaceService := service.NewWorkspaceService(queries)
@@ -67,16 +72,37 @@ func main() {
 	metaClient := meta.NewClient(cfg.MetaAppID, cfg.MetaAppSecret, cfg.MetaRedirectURI)
 	tiktokClient := tiktok.NewClient(cfg.TikTokAppID, cfg.TikTokAppSecret, cfg.TikTokRedirectURI)
 	googleClient := google.NewClient(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleAdsRedirectURI, cfg.GoogleAdsDeveloperToken, cfg.GoogleAdsLoginCustomerID)
+	zernioClient := zernio.NewClient(cfg.ZernioAPIKey, cfg.ZernioBaseURL)
+	zernioAdapters := zernio.NewAdapters(zernioClient)
+
+	// Native adapters first, then Zernio covers every network we don't build
+	// natively (LinkedIn, Pinterest, X, OpenAI, and Zernio's Meta/Google/TikTok).
+	dataSources := []integrations.CampaignDataSource{metaClient, tiktokClient, googleClient}
+	campaignAdapters := []integrations.CampaignAdapter{metaClient, tiktokClient, googleClient}
+	for _, za := range zernioAdapters {
+		dataSources = append(dataSources, za)
+		campaignAdapters = append(campaignAdapters, za)
+	}
+
 	integrationsHandler := handler.NewIntegrationsHandler(queries, cfg, metaClient, tiktokClient, googleClient)
-	syncService := service.NewSyncService(queries, cfg.TokenEncryptionKey, metaClient, tiktokClient, googleClient)
+	zernioHandler := handler.NewZernioHandler(cfg, zernioClient, queries)
+	syncService := service.NewSyncService(queries, cfg.TokenEncryptionKey, dataSources...)
 	syncHandler := handler.NewSyncHandler(queries, syncService)
 	dashboardHandler := handler.NewDashboardHandler(queries)
-	campaignService := service.NewCampaignService(queries, cfg.TokenEncryptionKey, metaClient, tiktokClient, googleClient)
+	campaignService := service.NewCampaignService(queries, cfg.TokenEncryptionKey, campaignAdapters...)
 	actionService := service.NewActionService(queries, campaignService)
+	spendGuard := service.NewSpendGuard(queries, walletService, campaignService)
+	campaignService.SetSpendGuard(spendGuard)
+	walletService.SetOnDebit(spendGuard.Enforce)
+	syncService.SetBilling(walletService, spendGuard)
 	campaignHandler := handler.NewCampaignHandler(campaignService, actionService)
 	actionHandler := handler.NewActionHandler(actionService)
-	aiHandler := handler.NewAIHandler(queries, aiClient, actionService)
-	platformsHandler := handler.NewPlatformsHandler()
+	aiHandler := handler.NewAIHandler(queries, aiClient, actionService, walletService)
+	reviewHandler := handler.NewReviewHandler(campaignService, actionService)
+	platformsHandler := handler.NewPlatformsHandler(queries)
+	walletHandler := handler.NewWalletHandler(walletService, spendGuard)
+	mediaHandler := handler.NewMediaHandler(mediaService)
+	flutterwaveHandler := handler.NewFlutterwaveHandler(cfg, walletService, spendGuard, queries)
 
 	e := echo.New()
 	e.HideBanner = true
@@ -85,7 +111,7 @@ func main() {
 	e.Use(echomw.Recover())
 	e.Use(middleware.Logger())
 	e.Use(middleware.CORS(cfg.FrontendOrigin))
-	e.Use(echomw.BodyLimit("1M"))
+	e.Use(echomw.BodyLimit("66M"))
 	e.Use(middleware.RateLimit(60))
 	e.Use(middleware.Auth([]byte(cfg.JWTSecret)))
 
@@ -112,9 +138,15 @@ func main() {
 	e.GET("/api/integrations/tiktok/callback", integrationsHandler.TikTokCallback)
 	e.GET("/api/integrations/google/connect", integrationsHandler.GoogleConnect)
 	e.GET("/api/integrations/google/callback", integrationsHandler.GoogleCallback)
+	// Zernio — unified ads provider for the networks we don't build natively.
+	e.GET("/api/integrations/zernio/connect", zernioHandler.Connect)
+	e.GET("/api/integrations/zernio/callback", zernioHandler.Callback)
+	e.GET("/api/integrations/zernio/callback/:profile_id", zernioHandler.Callback)
+	e.POST("/api/integrations/zernio/sync", zernioHandler.Sync)
 	// Per-account management (a business may have many accounts per platform).
 	e.GET("/api/integrations/accounts/:id/options", integrationsHandler.AccountOptions)
 	e.PATCH("/api/integrations/accounts/:id", integrationsHandler.AccountConfigure)
+	e.PATCH("/api/integrations/accounts/:id/billing", integrationsHandler.SetAccountBilling)
 	e.DELETE("/api/integrations/accounts/:id", integrationsHandler.Disconnect)
 
 	// POST /api/sync/trigger runs SyncWorkspace synchronously. A 6-hour
@@ -137,15 +169,32 @@ func main() {
 
 	// Oma co-pilot: propose -> review -> approve/reject.
 	e.POST("/api/ai/campaign/propose", aiHandler.ProposeCampaign)
+	e.POST("/api/ai/review", reviewHandler.Run)
 	e.GET("/api/actions", actionHandler.List)
 	e.POST("/api/actions/:id/approve", actionHandler.Approve)
 	e.POST("/api/actions/:id/reject", actionHandler.Reject)
 
 	// Platform capabilities matrix — static, fetched once.
 	e.GET("/api/platforms/capabilities", platformsHandler.Capabilities)
+	// Platform overview — capability matrix + this workspace's connection state.
+	e.GET("/api/platforms", platformsHandler.Overview)
 
 	// Forecast — estimates reach/spend for an unsaved targeting spec.
 	e.POST("/api/campaigns/forecast", campaignHandler.Forecast)
+
+	// Prepaid wallet + ledger, and creative media uploads.
+	e.GET("/api/wallet", walletHandler.Get)
+	e.GET("/api/wallet/transactions", walletHandler.Transactions)
+	e.POST("/api/wallet/topup", walletHandler.TopUp)
+	e.POST("/api/wallet/checkout", flutterwaveHandler.Checkout)
+	e.POST("/api/webhooks/flutterwave", flutterwaveHandler.Webhook)
+	e.GET("/api/media", mediaHandler.List)
+	e.POST("/api/media", mediaHandler.Upload)
+	e.DELETE("/api/media/:id", mediaHandler.Delete)
+
+	// Uploaded media is served publicly (like a CDN) so ad platforms can fetch
+	// it by URL. The auth middleware exempts /media.
+	e.Static("/media", cfg.MediaDir)
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	go func() {

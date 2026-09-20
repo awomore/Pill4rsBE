@@ -25,10 +25,11 @@ type AIHandler struct {
 	queries  *db.Queries
 	aiClient *ai.Client
 	actions  *service.ActionService
+	wallet   *service.WalletService
 }
 
-func NewAIHandler(queries *db.Queries, aiClient *ai.Client, actions *service.ActionService) *AIHandler {
-	return &AIHandler{queries: queries, aiClient: aiClient, actions: actions}
+func NewAIHandler(queries *db.Queries, aiClient *ai.Client, actions *service.ActionService, wallet *service.WalletService) *AIHandler {
+	return &AIHandler{queries: queries, aiClient: aiClient, actions: actions, wallet: wallet}
 }
 
 type proposeCampaignRequest struct {
@@ -362,6 +363,19 @@ func (h *AIHandler) buildCopilotPrompt(ctx context.Context, userID, workspaceID 
 		summary.TotalConversions = totals.TotalConversions
 		summary.AverageRoas, _ = numericToFloat(totals.AverageRoas)
 		summary.AverageCpc, _ = numericToFloat(totals.AverageCpc)
+	}
+
+	// Prepaid wallet context so Oma budgets within available funds.
+	summary.SpendState = ws.SpendState
+	if h.wallet != nil {
+		if wsum, werr := h.wallet.Summary(ctx, uuid.UUID(workspaceID.Bytes)); werr == nil {
+			for _, bal := range wsum.Balances {
+				summary.Balances = append(summary.Balances, ai.BalanceLine{
+					Currency:     bal.Currency,
+					BalanceMinor: bal.BalanceMinor,
+				})
+			}
+		}
 	}
 
 	if breakdown, err := h.queries.GetDashboardCampaignBreakdown(ctx, db.GetDashboardCampaignBreakdownParams{

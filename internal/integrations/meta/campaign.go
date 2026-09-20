@@ -176,14 +176,58 @@ func (c *Client) createCreative(ctx context.Context, accessToken string, account
 			"value": map[string]any{"link": cr.LinkURL},
 		}
 	}
-	storySpec, _ := json.Marshal(map[string]any{"page_id": account.PageID, "link_data": linkData})
+
+	storySpec := map[string]any{"page_id": account.PageID, "link_data": linkData}
+
+	// Video creatives use video_data with a video_id from /advideos instead of
+	// link_data. The uploaded asset's public URL is fetched by Meta directly.
+	if cr.Format == "video" && cr.VideoURL != "" {
+		videoID, err := c.createVideo(ctx, accessToken, account, cr)
+		if err != nil {
+			return "", err
+		}
+		videoData := map[string]any{"video_id": videoID, "link": cr.LinkURL}
+		if cr.PrimaryText != "" {
+			videoData["message"] = cr.PrimaryText
+		}
+		if cr.Headline != "" {
+			videoData["title"] = cr.Headline
+		}
+		if cr.Description != "" {
+			videoData["link_description"] = cr.Description
+		}
+		if cr.ImageURL != "" {
+			videoData["image_url"] = cr.ImageURL
+		}
+		if spec.CTA != "" {
+			videoData["call_to_action"] = map[string]any{
+				"type":  spec.CTA,
+				"value": map[string]any{"link": cr.LinkURL},
+			}
+		}
+		storySpec = map[string]any{"page_id": account.PageID, "video_data": videoData}
+	}
+
+	storyJSON, _ := json.Marshal(storySpec)
 
 	form := url.Values{}
 	form.Set("name", spec.Name+" — creative")
-	form.Set("object_story_spec", string(storySpec))
+	form.Set("object_story_spec", string(storyJSON))
 	form.Set("access_token", accessToken)
 
 	endpoint := fmt.Sprintf("%s/%s/%s/adcreatives", c.graphBaseURL, c.apiVersion, ensureActPrefix(account.AccountID))
+	return c.postForm(ctx, endpoint, form)
+}
+
+// createVideo uploads a hosted video to the ad account by URL and returns its
+// video_id. Meta fetches the file from the public URL (our media CDN).
+func (c *Client) createVideo(ctx context.Context, accessToken string, account integrations.PlatformAccount, cr *integrations.CreativeSpec) (string, error) {
+	form := url.Values{}
+	form.Set("name", "creative video")
+	form.Set("file_url", cr.VideoURL)
+	form.Set("access_token", accessToken)
+
+	endpoint := fmt.Sprintf("%s/%s/%s/advideos", c.graphBaseURL, c.apiVersion, ensureActPrefix(account.AccountID))
 	return c.postForm(ctx, endpoint, form)
 }
 

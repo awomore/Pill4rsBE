@@ -50,6 +50,7 @@ type CampaignService struct {
 	queries  *db.Queries
 	encKey   string
 	adapters map[string]integrations.CampaignAdapter
+	guard    *SpendGuard
 }
 
 // NewCampaignService indexes the supplied adapters by platform. Adding a new
@@ -61,6 +62,10 @@ func NewCampaignService(queries *db.Queries, encKey string, adapters ...integrat
 	}
 	return &CampaignService{queries: queries, encKey: encKey, adapters: m}
 }
+
+// SetSpendGuard wires the prepaid spend guard. When set, create/launch/resume
+// are refused for workspaces whose wallet is empty.
+func (s *CampaignService) SetSpendGuard(g *SpendGuard) { s.guard = g }
 
 // CreateCampaignInput is the single user intent fanned out across platforms.
 // Either AdAccountIDs picks specific accounts or Platforms selects by driver key.
@@ -160,8 +165,8 @@ func ValidateCreateInput(in CreateCampaignInput) error {
 			if strings.TrimSpace(v.Creative.PrimaryText) == "" && strings.TrimSpace(v.Creative.Headline) == "" {
 				return ValidationError{fmt.Sprintf("variants[%d].creative needs primary_text or headline", i)}
 			}
-			if !looksLikeURL(v.Creative.ImageURL) {
-				return ValidationError{fmt.Sprintf("variants[%d].creative.image_url must be a valid http(s) URL", i)}
+			if !looksLikeURL(v.Creative.ImageURL) && !looksLikeURL(v.Creative.VideoURL) {
+				return ValidationError{fmt.Sprintf("variants[%d].creative needs image_url or video_url", i)}
 			}
 			if v.Creative.Format != "" && !integrations.ValidCreativeFormat(v.Creative.Format) {
 				return ValidationError{fmt.Sprintf("variants[%d].creative.format must be one of: image, video, gif, audio, playable", i)}
@@ -174,11 +179,54 @@ func ValidateCreateInput(in CreateCampaignInput) error {
 		if strings.TrimSpace(in.Creative.PrimaryText) == "" && strings.TrimSpace(in.Creative.Headline) == "" {
 			return ValidationError{"creative needs primary_text or headline"}
 		}
-		if !looksLikeURL(in.Creative.ImageURL) {
-			return ValidationError{"creative.image_url must be a valid http(s) URL"}
+		if !looksLikeURL(in.Creative.ImageURL) && !looksLikeURL(in.Creative.VideoURL) {
+			return ValidationError{"creative needs image_url or video_url"}
 		}
 		if in.Creative.Format != "" && !integrations.ValidCreativeFormat(in.Creative.Format) {
 			return ValidationError{"creative.format must be one of: image, video, gif, audio, playable"}
+		}
+	}
+	return nil
+}
+
+// resolveInputMedia turns uploaded media_asset_id references into public URLs
+// (and infers the creative format) so the rest of the pipeline works with URLs.
+func (s *CampaignService) resolveInputMedia(ctx context.Context, workspaceID uuid.UUID, in *CreateCampaignInput) error {
+	resolve := func(cr *integrations.CreativeSpec) error {
+		if cr == nil || strings.TrimSpace(cr.MediaAssetID) == "" {
+			return nil
+		}
+		id, err := uuid.Parse(strings.TrimSpace(cr.MediaAssetID))
+		if err != nil {
+			return ValidationError{"media_asset_id is invalid"}
+		}
+		asset, err := s.queries.GetMediaAsset(ctx, db.GetMediaAssetParams{
+			ID:          pgUUID(id),
+			WorkspaceID: pgUUID(workspaceID),
+		})
+		if err != nil {
+			return ValidationError{"media asset not found"}
+		}
+		switch asset.Kind {
+		case "video":
+			cr.VideoURL = asset.PublicUrl
+			if cr.Format == "" {
+				cr.Format = "video"
+			}
+		default:
+			cr.ImageURL = asset.PublicUrl
+			if cr.Format == "" {
+				cr.Format = "image"
+			}
+		}
+		return nil
+	}
+	if err := resolve(in.Creative); err != nil {
+		return err
+	}
+	for i := range in.Variants {
+		if err := resolve(in.Variants[i].Creative); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -190,8 +238,16 @@ func ValidateCreateInput(in CreateCampaignInput) error {
 // as a DRAFT with whatever partial IDs we got plus a warning. Partial success is
 // still success — it only errors if nothing was created.
 func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.UUID, in CreateCampaignInput) (CreateResult, error) {
+	if err := s.resolveInputMedia(ctx, workspaceID, &in); err != nil {
+		return CreateResult{}, err
+	}
 	if err := ValidateCreateInput(in); err != nil {
 		return CreateResult{}, err
+	}
+	if s.guard != nil {
+		if err := s.guard.CanSpend(ctx, workspaceID); err != nil {
+			return CreateResult{}, err
+		}
 	}
 
 	pgWID := pgtype.UUID{Bytes: workspaceID, Valid: true}
@@ -298,9 +354,9 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 			ExternalAdID:         textOrNull(state.AdID),
 			ExternalCreativeID:   textOrNull(state.CreativeID),
 			Creative:             creativeJSON,
-			BidStrategy:          textOrNull(spec.BidStrategy),
+			BidStrategy:          spec.BidStrategy,
 			BidCap:               numericOrNull(spec.BidCap),
-			PacingType:           textOrNull(spec.PacingType),
+			PacingType:           spec.PacingType,
 			FrequencyCap:         int32Ptr(spec.FrequencyCap),
 			FrequencyCapTimeUnit: textOrNull(spec.FrequencyCapUnit),
 			Variants:             variantsJSON,
@@ -337,6 +393,11 @@ func (s *CampaignService) LaunchCampaign(ctx context.Context, workspaceID, campa
 
 	if camp.Status != StatusDraft {
 		return db.Campaign{}, "", ValidationError{"campaign is not a launchable draft"}
+	}
+	if s.guard != nil {
+		if err := s.guard.CanSpend(ctx, workspaceID); err != nil {
+			return db.Campaign{}, "", err
+		}
 	}
 
 	account, err := s.queries.GetAdAccountByID(ctx, camp.AdAccountID)
@@ -414,6 +475,11 @@ func (s *CampaignService) SetCampaignStatus(ctx context.Context, workspaceID, ca
 	if status != StatusActive && status != StatusPaused {
 		return db.Campaign{}, "", ValidationError{"status must be ACTIVE or PAUSED"}
 	}
+	if status == StatusActive && s.guard != nil {
+		if err := s.guard.CanSpend(ctx, workspaceID); err != nil {
+			return db.Campaign{}, "", err
+		}
+	}
 
 	camp, err := s.queries.GetCampaignByIDForWorkspace(ctx, db.GetCampaignByIDForWorkspaceParams{
 		ID:          pgtype.UUID{Bytes: campaignID, Valid: true},
@@ -454,6 +520,28 @@ func (s *CampaignService) SetCampaignStatus(ctx context.Context, workspaceID, ca
 		return db.Campaign{}, "", fmt.Errorf("persist status: %w", err)
 	}
 	return updated, account.Platform, nil
+}
+
+// PauseWorkspaceCampaigns hard-pauses every ACTIVE campaign in a workspace,
+// best-effort. It is called by the spend guard when the wallet is exhausted.
+// Returns how many campaigns were paused.
+func (s *CampaignService) PauseWorkspaceCampaigns(ctx context.Context, workspaceID uuid.UUID, reason string) (int, error) {
+	rows, err := s.queries.GetCampaignsByWorkspace(ctx, pgUUID(workspaceID))
+	if err != nil {
+		return 0, err
+	}
+	paused := 0
+	for _, c := range rows {
+		if c.Status != StatusActive {
+			continue
+		}
+		if _, _, err := s.SetCampaignStatus(ctx, workspaceID, uuidFromPG(c.ID), StatusPaused); err != nil {
+			slog.Error("hard-pause campaign failed", "campaign", formatUUID(c.ID), "reason", reason, "error", err)
+			continue
+		}
+		paused++
+	}
+	return paused, nil
 }
 
 // UpdateCampaignBudget changes a campaign's daily budget (on the platform's ad

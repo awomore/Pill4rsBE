@@ -94,6 +94,12 @@ type CampaignPerformance struct {
 	Conversions int64
 }
 
+// BalanceLine is one currency's wallet balance in minor units (e.g. cents/kobo).
+type BalanceLine struct {
+	Currency     string
+	BalanceMinor int64
+}
+
 // PerformanceSummary is the aggregated performance the copilot reasons over.
 type PerformanceSummary struct {
 	TotalSpend       float64
@@ -103,6 +109,9 @@ type PerformanceSummary struct {
 	AverageRoas      float64
 	AverageCpc       float64
 	Campaigns        []CampaignPerformance
+	// Prepaid wallet context, so Oma budgets within available funds.
+	SpendState string
+	Balances   []BalanceLine
 }
 
 const copilotSystemPrompt = `You are "Oma", the user's dedicated AI marketing copilot inside Pill4rs.
@@ -134,6 +143,19 @@ func BuildCopilotPrompt(w db.Workspace, adAccounts []db.AdAccount, summary Perfo
 	}
 	fmt.Fprintf(&b, "- Primary goal: %s\n", textOrNotSet(w.PrimaryGoal))
 	fmt.Fprintf(&b, "- Target audience: %s\n", textOrNotSet(w.TargetAudience))
+
+	b.WriteString("\n## Wallet (prepaid)\n")
+	if summary.SpendState != "" {
+		fmt.Fprintf(&b, "- Spend state: %s\n", summary.SpendState)
+	}
+	if len(summary.Balances) == 0 {
+		b.WriteString("- No wallet balance on file.\n")
+	} else {
+		for _, bl := range summary.Balances {
+			fmt.Fprintf(&b, "- %s balance: %.2f\n", bl.Currency, float64(bl.BalanceMinor)/100)
+		}
+	}
+	b.WriteString("- The user must top up before spend is allowed; a low balance hard-pauses campaigns.\n")
 
 	b.WriteString("\n## Connected ad platforms\n")
 	if len(adAccounts) == 0 {

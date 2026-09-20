@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -27,6 +28,18 @@ type Config struct {
 	GoogleAdsLoginCustomerID string
 	GoogleAdsRedirectURI     string
 	RedisURL                 string
+	// Media storage.
+	StorageDriver      string
+	MediaDir           string
+	MediaPublicBaseURL string
+	// Billing.
+	CommissionRateBps        int
+	FlutterwaveSecretKey     string
+	FlutterwaveWebhookSecret string
+	FlutterwaveBaseURL       string
+	// Zernio — unified ads provider for the networks we don't build natively.
+	ZernioAPIKey  string
+	ZernioBaseURL string
 }
 
 func Load() (*Config, error) {
@@ -52,6 +65,19 @@ func Load() (*Config, error) {
 		GoogleAdsLoginCustomerID: os.Getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID"),
 		GoogleAdsRedirectURI:     os.Getenv("GOOGLE_ADS_REDIRECT_URI"),
 		RedisURL:                 os.Getenv("REDIS_URL"),
+		StorageDriver:            envOr("STORAGE_DRIVER", "local"),
+		MediaDir:                 envOr("MEDIA_DIR", "media"),
+		MediaPublicBaseURL:       os.Getenv("MEDIA_PUBLIC_BASE_URL"),
+		CommissionRateBps:        envIntOr("COMMISSION_RATE_BPS", 1000),
+		FlutterwaveSecretKey:     os.Getenv("FLUTTERWAVE_SECRET_KEY"),
+		FlutterwaveWebhookSecret: os.Getenv("FLUTTERWAVE_WEBHOOK_SECRET_HASH"),
+		FlutterwaveBaseURL:       envOr("FLUTTERWAVE_BASE_URL", "https://api.flutterwave.com/v3"),
+		ZernioAPIKey:             os.Getenv("ZERNIO_API_KEY"),
+		ZernioBaseURL:            envOr("ZERNIO_BASE_URL", "https://zernio.com/api"),
+	}
+
+	if cfg.MediaPublicBaseURL == "" {
+		cfg.MediaPublicBaseURL = fmt.Sprintf("http://localhost:%s", cfg.Port)
 	}
 
 	missing := []string{}
@@ -88,4 +114,20 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func envIntOr(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
 }

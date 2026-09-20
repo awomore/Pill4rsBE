@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/awomore/Pill4rsBE/internal/config"
 	"github.com/awomore/Pill4rsBE/internal/crypto"
@@ -187,6 +188,15 @@ func (h *IntegrationsHandler) List(c echo.Context) error {
 		if a.PixelID.Valid {
 			item["pixel_id"] = a.PixelID.String
 		}
+		item["billing_mode"] = a.BillingMode
+		item["payer"] = a.Payer
+		item["currency"] = a.Currency
+		if a.PaymentInstrument.Valid {
+			item["payment_instrument"] = a.PaymentInstrument.String
+		}
+		if a.SpendLimitMinor.Valid {
+			item["spend_limit_minor"] = a.SpendLimitMinor.Int64
+		}
 		out = append(out, item)
 	}
 	return c.JSON(http.StatusOK, out)
@@ -320,6 +330,88 @@ func (h *IntegrationsHandler) AccountConfigure(c echo.Context) error {
 		"status":   updated.Status,
 		"page_id":  textOrEmpty(updated.PageID),
 		"pixel_id": textOrEmpty(updated.PixelID),
+	})
+}
+
+type accountBillingRequest struct {
+	BillingMode       string `json:"billing_mode"`
+	Payer             string `json:"payer"`
+	PaymentInstrument string `json:"payment_instrument"`
+	Currency          string `json:"currency"`
+	SpendLimitMinor   *int64 `json:"spend_limit_minor"`
+}
+
+// SetAccountBilling configures how an ad account is funded: BYOB (the agency
+// pays the platform) or managed (Pill4rs is the payer and debits the wallet).
+func (h *IntegrationsHandler) SetAccountBilling(c echo.Context) error {
+	wid, err := uuid.Parse(workspaceIDOf(c))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid workspace id"})
+	}
+	aid, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid account id"})
+	}
+	ctx := c.Request().Context()
+
+	var req accountBillingRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+
+	account, err := h.getAccountForWorkspace(ctx, wid, aid)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "account not found"})
+	}
+
+	billingMode := account.BillingMode
+	if req.BillingMode != "" {
+		if req.BillingMode != "byob" && req.BillingMode != "managed" {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "billing_mode must be 'byob' or 'managed'"})
+		}
+		billingMode = req.BillingMode
+	}
+	payer := account.Payer
+	if req.Payer != "" {
+		if req.Payer != "agency" && req.Payer != "pill4rs" {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "payer must be 'agency' or 'pill4rs'"})
+		}
+		payer = req.Payer
+	}
+	currency := account.Currency
+	if req.Currency != "" {
+		cur := strings.ToUpper(req.Currency)
+		if cur != "USD" && cur != "NGN" {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "currency must be USD or NGN"})
+		}
+		currency = cur
+	}
+	instrument := account.PaymentInstrument
+	if req.PaymentInstrument != "" {
+		instrument = pgtype.Text{String: req.PaymentInstrument, Valid: true}
+	}
+	limit := account.SpendLimitMinor
+	if req.SpendLimitMinor != nil {
+		limit = pgtype.Int8{Int64: *req.SpendLimitMinor, Valid: true}
+	}
+
+	updated, err := h.queries.SetAdAccountBilling(ctx, db.SetAdAccountBillingParams{
+		ID:                account.ID,
+		BillingMode:       billingMode,
+		Payer:             payer,
+		PaymentInstrument: instrument,
+		Currency:          currency,
+		SpendLimitMinor:   limit,
+	})
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to update billing"})
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"id":                 formatUUID(updated.ID),
+		"billing_mode":       updated.BillingMode,
+		"payer":              updated.Payer,
+		"currency":           updated.Currency,
+		"payment_instrument": textOrEmpty(updated.PaymentInstrument),
 	})
 }
 

@@ -52,12 +52,14 @@ type variantRequest struct {
 }
 
 type creativeRequest struct {
-	PrimaryText string `json:"primary_text"`
-	Headline    string `json:"headline"`
-	Description string `json:"description"`
-	LinkURL     string `json:"link_url"`
-	ImageURL    string `json:"image_url"`
-	Format      string `json:"format,omitempty"`
+	PrimaryText  string `json:"primary_text"`
+	Headline     string `json:"headline"`
+	Description  string `json:"description"`
+	LinkURL      string `json:"link_url"`
+	ImageURL     string `json:"image_url"`
+	VideoURL     string `json:"video_url,omitempty"`
+	Format       string `json:"format,omitempty"`
+	MediaAssetID string `json:"media_asset_id,omitempty"`
 }
 
 func toCreativeSpec(r *creativeRequest) *integrations.CreativeSpec {
@@ -65,12 +67,14 @@ func toCreativeSpec(r *creativeRequest) *integrations.CreativeSpec {
 		return nil
 	}
 	return &integrations.CreativeSpec{
-		PrimaryText: r.PrimaryText,
-		Headline:    r.Headline,
-		Description: r.Description,
-		LinkURL:     r.LinkURL,
-		ImageURL:    r.ImageURL,
-		Format:      r.Format,
+		PrimaryText:  r.PrimaryText,
+		Headline:     r.Headline,
+		Description:  r.Description,
+		LinkURL:      r.LinkURL,
+		ImageURL:     r.ImageURL,
+		VideoURL:     r.VideoURL,
+		Format:       r.Format,
+		MediaAssetID: r.MediaAssetID,
 	}
 }
 
@@ -198,16 +202,16 @@ func campaignToMap(camp db.Campaign, platform string) map[string]interface{} {
 	if camp.Cta.Valid {
 		m["cta"] = camp.Cta.String
 	}
-	if camp.BidStrategy.Valid {
-		m["bid_strategy"] = camp.BidStrategy.String
+	if camp.BidStrategy != "" {
+		m["bid_strategy"] = camp.BidStrategy
 	}
 	if camp.BidCap.Valid {
 		if f, ok := numericToFloat(camp.BidCap); ok {
 			m["bid_cap"] = f
 		}
 	}
-	if camp.PacingType.Valid {
-		m["pacing_type"] = camp.PacingType.String
+	if camp.PacingType != "" {
+		m["pacing_type"] = camp.PacingType
 	}
 	if camp.FrequencyCap.Valid {
 		m["frequency_cap"] = camp.FrequencyCap.Int32

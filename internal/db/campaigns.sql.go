@@ -33,9 +33,9 @@ type CreateCampaignParams struct {
 	ExternalAdID         pgtype.Text
 	ExternalCreativeID   pgtype.Text
 	Creative             []byte
-	BidStrategy          pgtype.Text
+	BidStrategy          string
 	BidCap               pgtype.Numeric
-	PacingType           pgtype.Text
+	PacingType           string
 	FrequencyCap         pgtype.Int4
 	FrequencyCapTimeUnit pgtype.Text
 	Variants             []byte
@@ -195,50 +195,6 @@ func (q *Queries) GetCampaignsByWorkspace(ctx context.Context, workspaceID pgtyp
 	return items, nil
 }
 
-const updateCampaignRationale = `-- name: UpdateCampaignRationale :one
-UPDATE campaigns SET rationale = $2, updated_at = now() WHERE id = $1
-RETURNING id, workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget, created_at, updated_at, start_date, end_date, cta, targeting, external_adset_id, external_ad_id, external_creative_id, creative, bid_strategy, bid_cap, pacing_type, frequency_cap, frequency_cap_time_unit, variants, provenance, rationale
-`
-
-type UpdateCampaignRationaleParams struct {
-	ID        pgtype.UUID
-	Rationale []byte
-}
-
-func (q *Queries) UpdateCampaignRationale(ctx context.Context, arg UpdateCampaignRationaleParams) (Campaign, error) {
-	row := q.db.QueryRow(ctx, updateCampaignRationale, arg.ID, arg.Rationale)
-	var i Campaign
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.AdAccountID,
-		&i.ExternalCampaignID,
-		&i.Name,
-		&i.Objective,
-		&i.Status,
-		&i.DailyBudget,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.StartDate,
-		&i.EndDate,
-		&i.Cta,
-		&i.Targeting,
-		&i.ExternalAdsetID,
-		&i.ExternalAdID,
-		&i.ExternalCreativeID,
-		&i.Creative,
-		&i.BidStrategy,
-		&i.BidCap,
-		&i.PacingType,
-		&i.FrequencyCap,
-		&i.FrequencyCapTimeUnit,
-		&i.Variants,
-		&i.Provenance,
-		&i.Rationale,
-	)
-	return i, err
-}
-
 const getCampaignsWithLatestSnapshot = `-- name: GetCampaignsWithLatestSnapshot :many
 SELECT
     c.id, c.workspace_id, c.ad_account_id, c.external_campaign_id, c.name, c.objective, c.status, c.daily_budget, c.created_at, c.updated_at,
@@ -269,15 +225,15 @@ type GetCampaignsWithLatestSnapshotRow struct {
 	SnapshotID         pgtype.UUID
 	SnapshotDate       pgtype.Date
 	Spend              pgtype.Numeric
-	Impressions        pgtype.Int8
-	Clicks             pgtype.Int8
-	Conversions        pgtype.Int8
-	Reach              pgtype.Int8
+	Impressions        int64
+	Clicks             int64
+	Conversions        int64
+	Reach              int64
 	Cpm                pgtype.Numeric
 	Cpc                pgtype.Numeric
 	Ctr                pgtype.Numeric
 	Roas               pgtype.Numeric
-	Currency           pgtype.Text
+	Currency           string
 }
 
 func (q *Queries) GetCampaignsWithLatestSnapshot(ctx context.Context, workspaceID pgtype.UUID) ([]GetCampaignsWithLatestSnapshotRow, error) {
@@ -321,6 +277,50 @@ func (q *Queries) GetCampaignsWithLatestSnapshot(ctx context.Context, workspaceI
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateCampaignDailyBudget = `-- name: UpdateCampaignDailyBudget :one
+UPDATE campaigns SET daily_budget = $2, updated_at = now() WHERE id = $1
+RETURNING id, workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget, created_at, updated_at, start_date, end_date, cta, targeting, external_adset_id, external_ad_id, external_creative_id, creative, bid_strategy, bid_cap, pacing_type, frequency_cap, frequency_cap_time_unit, variants, provenance, rationale
+`
+
+type UpdateCampaignDailyBudgetParams struct {
+	ID          pgtype.UUID
+	DailyBudget pgtype.Numeric
+}
+
+func (q *Queries) UpdateCampaignDailyBudget(ctx context.Context, arg UpdateCampaignDailyBudgetParams) (Campaign, error) {
+	row := q.db.QueryRow(ctx, updateCampaignDailyBudget, arg.ID, arg.DailyBudget)
+	var i Campaign
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AdAccountID,
+		&i.ExternalCampaignID,
+		&i.Name,
+		&i.Objective,
+		&i.Status,
+		&i.DailyBudget,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartDate,
+		&i.EndDate,
+		&i.Cta,
+		&i.Targeting,
+		&i.ExternalAdsetID,
+		&i.ExternalAdID,
+		&i.ExternalCreativeID,
+		&i.Creative,
+		&i.BidStrategy,
+		&i.BidCap,
+		&i.PacingType,
+		&i.FrequencyCap,
+		&i.FrequencyCapTimeUnit,
+		&i.Variants,
+		&i.Provenance,
+		&i.Rationale,
+	)
+	return i, err
 }
 
 const updateCampaignDeliverable = `-- name: UpdateCampaignDeliverable :one
@@ -380,34 +380,62 @@ func (q *Queries) UpdateCampaignDeliverable(ctx context.Context, arg UpdateCampa
 	return i, err
 }
 
-const upsertCampaign = `-- name: UpsertCampaign :one
-INSERT INTO campaigns (workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (ad_account_id, external_campaign_id)
-DO UPDATE SET name = EXCLUDED.name, objective = EXCLUDED.objective, status = EXCLUDED.status, daily_budget = EXCLUDED.daily_budget, updated_at = now()
+const updateCampaignProvenance = `-- name: UpdateCampaignProvenance :one
+UPDATE campaigns SET provenance = $2, updated_at = now() WHERE id = $1
 RETURNING id, workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget, created_at, updated_at, start_date, end_date, cta, targeting, external_adset_id, external_ad_id, external_creative_id, creative, bid_strategy, bid_cap, pacing_type, frequency_cap, frequency_cap_time_unit, variants, provenance, rationale
 `
 
-type UpsertCampaignParams struct {
-	WorkspaceID        pgtype.UUID
-	AdAccountID        pgtype.UUID
-	ExternalCampaignID string
-	Name               string
-	Objective          pgtype.Text
-	Status             string
-	DailyBudget        pgtype.Numeric
+type UpdateCampaignProvenanceParams struct {
+	ID         pgtype.UUID
+	Provenance []byte
 }
 
-func (q *Queries) UpsertCampaign(ctx context.Context, arg UpsertCampaignParams) (Campaign, error) {
-	row := q.db.QueryRow(ctx, upsertCampaign,
-		arg.WorkspaceID,
-		arg.AdAccountID,
-		arg.ExternalCampaignID,
-		arg.Name,
-		arg.Objective,
-		arg.Status,
-		arg.DailyBudget,
+func (q *Queries) UpdateCampaignProvenance(ctx context.Context, arg UpdateCampaignProvenanceParams) (Campaign, error) {
+	row := q.db.QueryRow(ctx, updateCampaignProvenance, arg.ID, arg.Provenance)
+	var i Campaign
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AdAccountID,
+		&i.ExternalCampaignID,
+		&i.Name,
+		&i.Objective,
+		&i.Status,
+		&i.DailyBudget,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartDate,
+		&i.EndDate,
+		&i.Cta,
+		&i.Targeting,
+		&i.ExternalAdsetID,
+		&i.ExternalAdID,
+		&i.ExternalCreativeID,
+		&i.Creative,
+		&i.BidStrategy,
+		&i.BidCap,
+		&i.PacingType,
+		&i.FrequencyCap,
+		&i.FrequencyCapTimeUnit,
+		&i.Variants,
+		&i.Provenance,
+		&i.Rationale,
 	)
+	return i, err
+}
+
+const updateCampaignRationale = `-- name: UpdateCampaignRationale :one
+UPDATE campaigns SET rationale = $2, updated_at = now() WHERE id = $1
+RETURNING id, workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget, created_at, updated_at, start_date, end_date, cta, targeting, external_adset_id, external_ad_id, external_creative_id, creative, bid_strategy, bid_cap, pacing_type, frequency_cap, frequency_cap_time_unit, variants, provenance, rationale
+`
+
+type UpdateCampaignRationaleParams struct {
+	ID        pgtype.UUID
+	Rationale []byte
+}
+
+func (q *Queries) UpdateCampaignRationale(ctx context.Context, arg UpdateCampaignRationaleParams) (Campaign, error) {
+	row := q.db.QueryRow(ctx, updateCampaignRationale, arg.ID, arg.Rationale)
 	var i Campaign
 	err := row.Scan(
 		&i.ID,
@@ -484,62 +512,34 @@ func (q *Queries) UpdateCampaignStatus(ctx context.Context, arg UpdateCampaignSt
 	return i, err
 }
 
-const updateCampaignDailyBudget = `-- name: UpdateCampaignDailyBudget :one
-UPDATE campaigns SET daily_budget = $2, updated_at = now() WHERE id = $1
+const upsertCampaign = `-- name: UpsertCampaign :one
+INSERT INTO campaigns (workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (ad_account_id, external_campaign_id)
+DO UPDATE SET name = EXCLUDED.name, objective = EXCLUDED.objective, status = EXCLUDED.status, daily_budget = EXCLUDED.daily_budget, updated_at = now()
 RETURNING id, workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget, created_at, updated_at, start_date, end_date, cta, targeting, external_adset_id, external_ad_id, external_creative_id, creative, bid_strategy, bid_cap, pacing_type, frequency_cap, frequency_cap_time_unit, variants, provenance, rationale
 `
 
-type UpdateCampaignDailyBudgetParams struct {
-	ID          pgtype.UUID
-	DailyBudget pgtype.Numeric
+type UpsertCampaignParams struct {
+	WorkspaceID        pgtype.UUID
+	AdAccountID        pgtype.UUID
+	ExternalCampaignID string
+	Name               string
+	Objective          pgtype.Text
+	Status             string
+	DailyBudget        pgtype.Numeric
 }
 
-func (q *Queries) UpdateCampaignDailyBudget(ctx context.Context, arg UpdateCampaignDailyBudgetParams) (Campaign, error) {
-	row := q.db.QueryRow(ctx, updateCampaignDailyBudget, arg.ID, arg.DailyBudget)
-	var i Campaign
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.AdAccountID,
-		&i.ExternalCampaignID,
-		&i.Name,
-		&i.Objective,
-		&i.Status,
-		&i.DailyBudget,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.StartDate,
-		&i.EndDate,
-		&i.Cta,
-		&i.Targeting,
-		&i.ExternalAdsetID,
-		&i.ExternalAdID,
-		&i.ExternalCreativeID,
-		&i.Creative,
-		&i.BidStrategy,
-		&i.BidCap,
-		&i.PacingType,
-		&i.FrequencyCap,
-		&i.FrequencyCapTimeUnit,
-		&i.Variants,
-		&i.Provenance,
-		&i.Rationale,
+func (q *Queries) UpsertCampaign(ctx context.Context, arg UpsertCampaignParams) (Campaign, error) {
+	row := q.db.QueryRow(ctx, upsertCampaign,
+		arg.WorkspaceID,
+		arg.AdAccountID,
+		arg.ExternalCampaignID,
+		arg.Name,
+		arg.Objective,
+		arg.Status,
+		arg.DailyBudget,
 	)
-	return i, err
-}
-
-const updateCampaignProvenance = `-- name: UpdateCampaignProvenance :one
-UPDATE campaigns SET provenance = $2, updated_at = now() WHERE id = $1
-RETURNING id, workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget, created_at, updated_at, start_date, end_date, cta, targeting, external_adset_id, external_ad_id, external_creative_id, creative, bid_strategy, bid_cap, pacing_type, frequency_cap, frequency_cap_time_unit, variants, provenance, rationale
-`
-
-type UpdateCampaignProvenanceParams struct {
-	ID         pgtype.UUID
-	Provenance []byte
-}
-
-func (q *Queries) UpdateCampaignProvenance(ctx context.Context, arg UpdateCampaignProvenanceParams) (Campaign, error) {
-	row := q.db.QueryRow(ctx, updateCampaignProvenance, arg.ID, arg.Provenance)
 	var i Campaign
 	err := row.Scan(
 		&i.ID,

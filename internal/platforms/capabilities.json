@@ -1,5 +1,6 @@
 {
   "meta": {
+    "available": true,
     "targeting": {
       "geo": "supported",
       "age": "supported",
@@ -44,6 +45,7 @@
     "forecast": "supported"
   },
   "tiktok": {
+    "available": true,
     "targeting": {
       "geo": "supported",
       "age": "supported",
@@ -86,6 +88,7 @@
     "forecast": "unsupported"
   },
   "google": {
+    "available": true,
     "targeting": {
       "geo": "supported",
       "age": "supported",
@@ -126,5 +129,155 @@
       "app_promotion": "unsupported"
     },
     "forecast": "supported"
+  },
+  "metaads": {
+    "available": true,
+    "targeting": {"geo": "supported", "age": "supported", "gender": "supported", "interests": "supported", "custom_audiences": "supported", "lookalike_audiences": "supported"},
+    "bidding": {"lowest_cost": "supported", "cost_cap": "supported", "bid_cap": "supported", "roas_goal": "supported"},
+    "frequency_cap": "supported",
+    "pacing": {"standard": "supported"},
+    "creative": {"single_image": "supported", "video": "supported", "carousel": "supported"},
+    "objectives": {"awareness": "supported", "traffic": "supported", "engagement": "supported", "leads": "supported", "sales": "supported", "app_promotion": "supported"},
+    "forecast": "unsupported"
+  },
+  "googleads": {
+    "available": true,
+    "targeting": {"geo": "supported", "age": "supported", "gender": "supported", "interests": "supported", "languages": "supported"},
+    "bidding": {"lowest_cost": "supported", "cost_cap": "supported", "roas_goal": "supported"},
+    "frequency_cap": "supported",
+    "pacing": {"standard": "supported"},
+    "creative": {"single_image": "supported", "video": "supported", "responsive_search": "supported"},
+    "objectives": {"traffic": "supported", "leads": "supported", "sales": "supported"},
+    "forecast": "unsupported"
+  },
+  "tiktokads": {
+    "available": true,
+    "targeting": {"geo": "supported", "age": "supported", "gender": "supported", "interests": "supported", "custom_audiences": "supported", "lookalike_audiences": "supported"},
+    "bidding": {"lowest_cost": "supported", "cost_cap": "supported", "roas_goal": "supported"},
+    "frequency_cap": "unsupported",
+    "pacing": {"standard": "supported", "accelerated": "supported"},
+    "creative": {"single_image": "supported", "video": "supported"},
+    "objectives": {"awareness": "supported", "traffic": "supported", "engagement": "supported", "leads": "supported", "sales": "supported", "app_promotion": "supported"},
+    "forecast": "unsupported"
+  },
+  "linkedinads": {
+    "available": true,
+    "targeting": {"geo": "supported", "age": "supported", "gender": "supported", "interests": "supported", "custom_audiences": "supported", "lookalike_audiences": "supported"},
+    "bidding": {"lowest_cost": "supported", "cost_cap": "supported", "bid_cap": "supported"},
+    "frequency_cap": "supported",
+    "pacing": {"standard": "supported"},
+    "creative": {"single_image": "supported", "video": "supported", "document": "supported"},
+    "objectives": {"awareness": "supported", "traffic": "supported", "engagement": "supported", "leads": "supported", "sales": "supported"},
+    "forecast": "unsupported"
+  },
+  "pinterestads": {
+    "available": true,
+    "targeting": {"geo": "supported", "age": "supported", "gender": "supported", "interests": "supported"},
+    "bidding": {"lowest_cost": "supported", "cost_cap": "supported"},
+    "frequency_cap": "supported",
+    "pacing": {"standard": "supported"},
+    "creative": {"single_image": "supported", "video": "supported"},
+    "objectives": {"awareness": "supported", "traffic": "supported", "sales": "supported"},
+    "forecast": "unsupported"
+  },
+  "xads": {
+    "available": true,
+    "targeting": {"geo": "supported", "age": "supported", "gender": "supported", "interests": "supported", "custom_audiences": "supported"},
+    "bidding": {"lowest_cost": "supported", "bid_cap": "supported"},
+    "frequency_cap": "supported",
+    "pacing": {"standard": "supported"},
+    "creative": {"single_image": "supported", "video": "supported"},
+    "objectives": {"awareness": "supported", "traffic": "supported", "engagement": "supported", "leads": "supported", "sales": "supported"},
+    "forecast": "unsupported"
+  },
+  "openaiads": {
+    "available": true,
+    "targeting": {"geo": "supported"},
+    "bidding": {"lowest_cost": "supported"},
+    "frequency_cap": "unsupported",
+    "pacing": {"standard": "supported"},
+    "creative": {"single_image": "supported"},
+    "objectives": {"awareness": "supported", "traffic": "supported", "conversions": "supported"},
+    "forecast": "unsupported"
+  },
+  "linkedin": {
+    "available": false,
+    "targeting": {},
+    "bidding": {},
+    "frequency_cap": "unsupported",
+    "pacing": {},
+    "creative": {},
+    "objectives": {},
+    "forecast": "unsupported"
+  },
+  "x": {
+    "available": false,
+    "targeting": {},
+    "bidding": {},
+    "frequency_cap": "unsupported",
+    "pacing": {},
+    "creative": {},
+    "objectives": {},
+    "forecast": "unsupported"
+  },
+  "pinterest": {
+    "available": false,
+    "targeting": {},
+    "bidding": {},
+    "frequency_cap": "unsupported",
+    "pacing": {},
+    "creative": {},
+    "objectives": {},
+    "forecast": "unsupported"
+  },
+  "snapchat": {
+    "available": false,
+    "targeting": {},
+    "bidding": {},
+    "frequency_cap": "unsupported",
+    "pacing": {},
+    "creative": {},
+    "objectives": {},
+    "forecast": "unsupported"
+  },
+  "reddit": {
+    "available": false,
+    "targeting": {},
+    "bidding": {},
+    "frequency_cap": "unsupported",
+    "pacing": {},
+    "creative": {},
+    "objectives": {},
+    "forecast": "unsupported"
+  },
+  "microsoft": {
+    "available": false,
+    "targeting": {},
+    "bidding": {},
+    "frequency_cap": "unsupported",
+    "pacing": {},
+    "creative": {},
+    "objectives": {},
+    "forecast": "unsupported"
+  },
+  "amazon": {
+    "available": false,
+    "targeting": {},
+    "bidding": {},
+    "frequency_cap": "unsupported",
+    "pacing": {},
+    "creative": {},
+    "objectives": {},
+    "forecast": "unsupported"
+  },
+  "dv360": {
+    "available": false,
+    "targeting": {},
+    "bidding": {},
+    "frequency_cap": "unsupported",
+    "pacing": {},
+    "creative": {},
+    "objectives": {},
+    "forecast": "unsupported"
   }
 }

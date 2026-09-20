@@ -86,6 +86,24 @@ func (s *CampaignService) AssessHealth(ctx context.Context, workspaceID, campaig
 	return assessSignals(computeSignals(snaps), budget), camp, nil
 }
 
+// assessCampaign runs the health rule engine for an already-loaded campaign.
+// Shared by the single-campaign card and the workspace-wide review.
+func (s *CampaignService) assessCampaign(ctx context.Context, camp db.Campaign) (HealthAssessment, healthSignals, error) {
+	end := time.Now().UTC()
+	start := end.AddDate(0, 0, -healthWindowDays)
+	snaps, err := s.queries.GetSnapshotsByCampaignAndDateRange(ctx, db.GetSnapshotsByCampaignAndDateRangeParams{
+		CampaignID: camp.ID,
+		Date:       pgtype.Date{Time: start, Valid: true},
+		Date_2:     pgtype.Date{Time: end, Valid: true},
+	})
+	if err != nil {
+		return HealthAssessment{}, healthSignals{}, fmt.Errorf("load snapshots: %w", err)
+	}
+	budget, _ := numericToFloat(camp.DailyBudget)
+	sig := computeSignals(snaps)
+	return assessSignals(sig, budget), sig, nil
+}
+
 func computeSignals(snaps []db.PerformanceSnapshot) healthSignals {
 	var sig healthSignals
 	var impressions, clicks, reach int64

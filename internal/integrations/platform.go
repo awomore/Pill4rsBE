@@ -78,12 +78,14 @@ func ValidObjective(o string) bool {
 // platforms this lives on an ad-creative object below the campaign. Format is the
 // media type the creative carries: image, video, gif, audio, or playable.
 type CreativeSpec struct {
-	PrimaryText string `json:"primary_text"`
-	Headline    string `json:"headline"`
-	Description string `json:"description"`
-	LinkURL     string `json:"link_url"`
-	ImageURL    string `json:"image_url"`
-	Format      string `json:"format,omitempty"`
+	PrimaryText  string `json:"primary_text"`
+	Headline     string `json:"headline"`
+	Description  string `json:"description"`
+	LinkURL      string `json:"link_url"`
+	ImageURL     string `json:"image_url"`
+	VideoURL     string `json:"video_url,omitempty"`
+	Format       string `json:"format,omitempty"`
+	MediaAssetID string `json:"media_asset_id,omitempty"`
 }
 
 // ValidCreativeFormat reports whether f is a known creative format.
@@ -343,6 +345,15 @@ type CampaignManager interface {
 type CampaignAdapter interface {
 	CampaignCreator
 	CampaignManager
+}
+
+// MediaUploader is the optional per-platform contract for ingesting creative
+// bytes directly and returning a platform media id (e.g. Meta image_hash /
+// video_id, TikTok image_id / video_id). Adapters that ingest hosted media by
+// URL (the current Meta/TikTok path) do not need to implement it.
+type MediaUploader interface {
+	Platform() string
+	UploadMedia(ctx context.Context, accessToken string, account PlatformAccount, kind string, data []byte, contentType string) (platformMediaID string, err error)
 }
 
 // NormalizedCampaign is a platform-agnostic campaign as read back during sync.

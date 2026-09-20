@@ -21,19 +21,21 @@ type AdAccount struct {
 	PageID                pgtype.Text
 	PixelID               pgtype.Text
 	Name                  pgtype.Text
+	BillingMode           string
+	Payer                 string
+	PaymentInstrument     pgtype.Text
+	Currency              string
+	SpendLimitMinor       pgtype.Int8
 }
 
-type CampaignAction struct {
-	ID          pgtype.UUID
-	WorkspaceID pgtype.UUID
-	Actor       string
-	Type        string
-	Status      string
-	Payload     []byte
-	Result      []byte
-	Error       pgtype.Text
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+type BillingProfile struct {
+	ID                   pgtype.UUID
+	WorkspaceID          pgtype.UUID
+	ProviderCustomerID   pgtype.Text
+	DefaultPaymentMethod pgtype.Text
+	BillingMode          string
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
 }
 
 type Campaign struct {
@@ -55,9 +57,9 @@ type Campaign struct {
 	ExternalAdID         pgtype.Text
 	ExternalCreativeID   pgtype.Text
 	Creative             []byte
-	BidStrategy          pgtype.Text
+	BidStrategy          string
 	BidCap               pgtype.Numeric
-	PacingType           pgtype.Text
+	PacingType           string
 	FrequencyCap         pgtype.Int4
 	FrequencyCapTimeUnit pgtype.Text
 	Variants             []byte
@@ -65,11 +67,55 @@ type Campaign struct {
 	Rationale            []byte
 }
 
+type CampaignAction struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	Actor       string
+	Type        string
+	Status      string
+	Payload     []byte
+	Result      []byte
+	Error       pgtype.Text
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type Commission struct {
+	ID              pgtype.UUID
+	WorkspaceID     pgtype.UUID
+	AdAccountID     pgtype.UUID
+	SnapshotID      pgtype.UUID
+	Currency        string
+	BaseMinor       int64
+	RateBps         int32
+	CommissionMinor int64
+	FxRate          pgtype.Numeric
+	CreatedAt       pgtype.Timestamptz
+}
+
 type Conversation struct {
 	ID          pgtype.UUID
 	WorkspaceID pgtype.UUID
 	Mode        string
 	CreatedAt   pgtype.Timestamptz
+}
+
+type MediaAsset struct {
+	ID             pgtype.UUID
+	WorkspaceID    pgtype.UUID
+	Kind           string
+	StorageKey     string
+	PublicUrl      string
+	Mime           string
+	Bytes          int64
+	Width          pgtype.Int4
+	Height         pgtype.Int4
+	DurationMs     pgtype.Int8
+	Checksum       pgtype.Text
+	Status         string
+	PlatformHashes []byte
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type Message struct {
@@ -96,6 +142,12 @@ type PerformanceSnapshot struct {
 	Currency    string
 }
 
+type ProviderEvent struct {
+	EventID     string
+	Type        string
+	ProcessedAt pgtype.Timestamptz
+}
+
 type Session struct {
 	ID               pgtype.UUID
 	UserID           pgtype.UUID
@@ -111,6 +163,37 @@ type User struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type Wallet struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	Status      string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type WalletBalance struct {
+	ID           pgtype.UUID
+	WalletID     pgtype.UUID
+	Currency     string
+	BalanceMinor int64
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type WalletTransaction struct {
+	ID                pgtype.UUID
+	WalletID          pgtype.UUID
+	Currency          string
+	Kind              string
+	AmountMinor       int64
+	BalanceAfterMinor int64
+	IdempotencyKey    string
+	SourceType        pgtype.Text
+	SourceID          pgtype.Text
+	FxRate            pgtype.Numeric
+	Metadata          []byte
+	CreatedAt         pgtype.Timestamptz
+}
+
 type Workspace struct {
 	ID                 pgtype.UUID
 	UserID             pgtype.UUID
@@ -122,4 +205,7 @@ type Workspace struct {
 	OnboardingComplete bool
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	SpendState         string
+	SpendStateReason   pgtype.Text
+	CommissionRateBps  int32
 }
