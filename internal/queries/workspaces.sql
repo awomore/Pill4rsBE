@@ -32,3 +32,9 @@ UPDATE workspaces
 SET commission_rate_bps = $2, updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- name: SetWorkspaceZernioProfile :one
+UPDATE workspaces
+SET zernio_profile_id = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;

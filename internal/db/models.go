@@ -208,4 +208,5 @@ type Workspace struct {
 	SpendState         string
 	SpendStateReason   pgtype.Text
 	CommissionRateBps  int32
+	ZernioProfileID    pgtype.Text
 }

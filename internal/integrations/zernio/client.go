@@ -111,14 +111,37 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	return raw, nil
 }
 
+// idField decodes an id that Zernio returns either as a plain string or as a
+// populated object like {"_id":"..."}.
+type idField string
+
+func (f *idField) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*f = idField(s)
+		return nil
+	}
+	var obj struct {
+		ID string `json:"_id"`
+	}
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return err
+	}
+	*f = idField(obj.ID)
+	return nil
+}
+
 // Account is a connected Zernio account (social or ads).
 type Account struct {
-	ID          string `json:"_id"`
-	Platform    string `json:"platform"`
-	ProfileID   string `json:"profileId"`
-	Username    string `json:"username"`
-	DisplayName string `json:"displayName"`
-	IsActive    bool   `json:"isActive"`
+	ID          string  `json:"_id"`
+	Platform    string  `json:"platform"`
+	ProfileID   idField `json:"profileId"`
+	Username    string  `json:"username"`
+	DisplayName string  `json:"displayName"`
+	IsActive    bool    `json:"isActive"`
 }
 
 // ListAccounts returns the accounts connected to a profile (all profiles when
@@ -169,11 +192,13 @@ func (c *Client) CreateProfile(ctx context.Context, name string) (Profile, error
 	if err != nil {
 		return Profile{}, err
 	}
-	var p Profile
-	if err := json.Unmarshal(raw, &p); err != nil {
+	var out struct {
+		Profile Profile `json:"profile"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
 		return Profile{}, fmt.Errorf("decode profile: %w", err)
 	}
-	return p, nil
+	return out.Profile, nil
 }
 
 // ConnectResult is the response from starting an ads OAuth connection.

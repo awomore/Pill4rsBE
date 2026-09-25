@@ -2,8 +2,10 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/awomore/Pill4rsBE/internal/config"
 	"github.com/awomore/Pill4rsBE/internal/crypto"
@@ -44,6 +46,14 @@ func (h *ZernioHandler) Connect(c echo.Context) error {
 		return badRequest(c, "platform is required (e.g. linkedin, twitter, pinterest, googleads)")
 	}
 	profileID := c.QueryParam("profile_id")
+	if profileID == "" {
+		resolved, perr := h.resolveProfileID(c.Request().Context(), workspaceIDOf(c))
+		if perr != nil {
+			slog.Error("zernio profile resolve failed", "error", perr)
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to start zernio connection"})
+		}
+		profileID = resolved
+	}
 
 	callback := c.Scheme() + "://" + c.Request().Host + "/api/integrations/zernio/callback"
 	if profileID != "" {
@@ -72,6 +82,14 @@ func (h *ZernioHandler) Callback(c echo.Context) error {
 		return c.Redirect(http.StatusTemporaryRedirect, settingsURL+"?error=zernio_denied")
 	}
 	profileID := c.Param("profile_id")
+	if profileID == "" {
+		profileID = c.QueryParam("profileId")
+	}
+	if profileID == "" {
+		if resolved, perr := h.resolveProfileID(c.Request().Context(), workspaceIDOf(c)); perr == nil {
+			profileID = resolved
+		}
+	}
 	if _, err := h.syncAccounts(c.Request().Context(), workspaceIDOf(c), profileID); err != nil {
 		slog.Error("zernio callback sync failed", "error", err)
 		return c.Redirect(http.StatusTemporaryRedirect, settingsURL+"?error=zernio_sync_failed")
@@ -85,12 +103,58 @@ func (h *ZernioHandler) Sync(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "zernio is not configured"})
 	}
 	profileID := c.QueryParam("profile_id")
+	if profileID == "" {
+		resolved, perr := h.resolveProfileID(c.Request().Context(), workspaceIDOf(c))
+		if perr != nil {
+			slog.Error("zernio profile resolve failed", "error", perr)
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to sync zernio accounts"})
+		}
+		profileID = resolved
+	}
 	n, err := h.syncAccounts(c.Request().Context(), workspaceIDOf(c), profileID)
 	if err != nil {
 		slog.Error("zernio sync failed", "error", err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to sync zernio accounts"})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"accounts": n})
+}
+
+// resolveProfileID returns the workspace's Zernio profile id, creating one on
+// first use. Zernio requires a profileId to start an ads connection, so each
+// Pill4rs workspace maps to exactly one Zernio profile.
+func (h *ZernioHandler) resolveProfileID(ctx context.Context, workspaceID string) (string, error) {
+	wid, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return "", err
+	}
+	pgWID := pgtype.UUID{Bytes: wid, Valid: true}
+
+	ws, err := h.queries.GetWorkspaceByID(ctx, pgWID)
+	if err != nil {
+		return "", err
+	}
+	if ws.ZernioProfileID.Valid && ws.ZernioProfileID.String != "" {
+		return ws.ZernioProfileID.String, nil
+	}
+
+	name := ws.BusinessName.String
+	if !ws.BusinessName.Valid || strings.TrimSpace(name) == "" {
+		name = "Pill4rs workspace " + wid.String()
+	}
+	profile, err := h.client.CreateProfile(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	if profile.ID == "" {
+		return "", fmt.Errorf("zernio profile create returned no id")
+	}
+	if _, err := h.queries.SetWorkspaceZernioProfile(ctx, db.SetWorkspaceZernioProfileParams{
+		ID:              pgWID,
+		ZernioProfileID: pgtype.Text{String: profile.ID, Valid: true},
+	}); err != nil {
+		return "", err
+	}
+	return profile.ID, nil
 }
 
 // syncAccounts upserts every Zernio ads account for a profile as a Pill4rs

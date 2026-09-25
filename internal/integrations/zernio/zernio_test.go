@@ -117,6 +117,72 @@ func TestCreateAdParsesTree(t *testing.T) {
 	}
 }
 
+func TestCreateProfileUnwrapsEnvelope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/profiles" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		w.Write([]byte(`{"message":"Profile created successfully","profile":{"_id":"66a1f0c2a4b9d3e8f1a2b3c4","name":"Acme"}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient("k", srv.URL)
+	p, err := c.CreateProfile(context.Background(), "Acme")
+	if err != nil {
+		t.Fatalf("CreateProfile error: %v", err)
+	}
+	if p.ID != "66a1f0c2a4b9d3e8f1a2b3c4" || p.Name != "Acme" {
+		t.Fatalf("profile = %+v", p)
+	}
+}
+
+func TestAdsConnectURLSendsProfileID(t *testing.T) {
+	var path, query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		query = r.URL.RawQuery
+		w.Write([]byte(`{"authUrl":"https://example.com/oauth","state":"abc"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient("k", srv.URL)
+	res, err := c.AdsConnectURL(context.Background(), "linkedin", "prof1", "http://localhost:8080/cb")
+	if err != nil {
+		t.Fatalf("AdsConnectURL error: %v", err)
+	}
+	if !strings.Contains(path, "/v1/connect/linkedin/ads") {
+		t.Errorf("path = %q", path)
+	}
+	if !strings.Contains(query, "profileId=prof1") || !strings.Contains(query, "redirect_url=") {
+		t.Errorf("query = %q", query)
+	}
+	if res.AuthURL != "https://example.com/oauth" {
+		t.Errorf("authUrl = %q", res.AuthURL)
+	}
+}
+
+func TestListAccountsAcceptsObjectProfileID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"accounts":[
+			{"_id":"a1","platform":"linkedin","profileId":{"_id":"p1","name":"Acme"},"username":"acme","isActive":true},
+			{"_id":"a2","platform":"twitter","profileId":"p2","username":"acme2","isActive":false}
+		]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient("k", srv.URL)
+	accounts, err := c.ListAccounts(context.Background(), "p1")
+	if err != nil {
+		t.Fatalf("ListAccounts error: %v", err)
+	}
+	if len(accounts) != 2 {
+		t.Fatalf("accounts = %+v", accounts)
+	}
+	if string(accounts[0].ProfileID) != "p1" || string(accounts[1].ProfileID) != "p2" {
+		t.Fatalf("profile ids = %q, %q", accounts[0].ProfileID, accounts[1].ProfileID)
+	}
+}
+
 func TestNewAdaptersCoversAllNetworks(t *testing.T) {
 	adapters := NewAdapters(NewClient("k", "http://x"))
 	seen := map[string]bool{}
