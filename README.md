@@ -375,6 +375,11 @@ All errors are returned as `{ "error": "message" }`. Authenticated routes requir
 | `POST` | `/api/auth/signup` · `/login` · `/refresh` · `/logout` | Email/password auth. |
 | `GET` | `/api/auth/google` · `/api/auth/google/callback` | Google OAuth login. |
 | `GET` / `PATCH` | `/api/workspace` | Read / update the workspace profile. |
+| `GET` | `/api/user` | Signed-in user profile + platform-admin flag. |
+| `POST` | `/api/user/password` | Change password with current-password verification. |
+| `GET` | `/api/user/sessions` | List refresh sessions. |
+| `DELETE` | `/api/user/sessions/:id` | Revoke a refresh session. |
+| `GET` | `/api/user/workspaces` | Every workspace accessible to the user. |
 | `POST` | `/api/ai/chat` | SSE chat with Oma (`mode`: `copilot` (default) or `onboarding`). |
 | `GET` | `/api/integrations` | List connected ad accounts (a business can connect many, including several per platform). |
 | `GET` | `/api/integrations/meta/connect` · `/callback` | Meta OAuth connect flow. |

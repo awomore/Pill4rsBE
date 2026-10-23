@@ -191,3 +191,8 @@ func (s *AdminService) audit(ctx context.Context, adminID uuid.UUID, action, tar
 		slog.Error("admin audit log failed", "action", action, "error", err)
 	}
 }
+
+// ListAgencyClients returns every client workspace under an agency.
+func (s *AdminService) ListAgencyClients(ctx context.Context, agencyID uuid.UUID) ([]db.Workspace, error) {
+	return s.queries.ListAgencyWorkspaces(ctx, pgUUID(agencyID))
+}

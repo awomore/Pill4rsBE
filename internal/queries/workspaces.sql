@@ -38,3 +38,9 @@ UPDATE workspaces
 SET zernio_profile_id = $2, updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- name: ListWorkspacesForUser :many
+SELECT DISTINCT w.* FROM workspaces w
+LEFT JOIN agency_members m ON m.agency_id = w.agency_id AND m.user_id = $1
+WHERE w.user_id = $1 OR m.user_id = $1
+ORDER BY w.created_at ASC;

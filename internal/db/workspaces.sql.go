@@ -283,3 +283,47 @@ func (q *Queries) UpdateWorkspaceProfile(ctx context.Context, arg UpdateWorkspac
 	)
 	return i, err
 }
+
+const listWorkspacesForUser = `-- name: ListWorkspacesForUser :many
+SELECT DISTINCT w.id, w.user_id, w.business_name, w.industry, w.monthly_budget, w.primary_goal, w.target_audience, w.onboarding_complete, w.created_at, w.updated_at, w.spend_state, w.spend_state_reason, w.commission_rate_bps, w.zernio_profile_id, w.agency_id, w.client_label FROM workspaces w
+LEFT JOIN agency_members m ON m.agency_id = w.agency_id AND m.user_id = $1
+WHERE w.user_id = $1 OR m.user_id = $1
+ORDER BY w.created_at ASC
+`
+
+func (q *Queries) ListWorkspacesForUser(ctx context.Context, userID pgtype.UUID) ([]Workspace, error) {
+	rows, err := q.db.Query(ctx, listWorkspacesForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Workspace
+	for rows.Next() {
+		var i Workspace
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.BusinessName,
+			&i.Industry,
+			&i.MonthlyBudget,
+			&i.PrimaryGoal,
+			&i.TargetAudience,
+			&i.OnboardingComplete,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SpendState,
+			&i.SpendStateReason,
+			&i.CommissionRateBps,
+			&i.ZernioProfileID,
+			&i.AgencyID,
+			&i.ClientLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

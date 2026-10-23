@@ -232,3 +232,31 @@ func adminError(c echo.Context, err error) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "admin request failed"})
 	}
 }
+
+// AgencyClients lists a specific agency's client workspaces.
+func (h *AdminHandler) AgencyClients(c echo.Context) error {
+	agencyID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return badRequest(c, "invalid agency id")
+	}
+	rows, err := h.svc.ListAgencyClients(c.Request().Context(), agencyID)
+	if err != nil {
+		return adminError(c, err)
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, w := range rows {
+		name := ""
+		if w.ClientLabel.Valid {
+			name = w.ClientLabel.String
+		} else if w.BusinessName.Valid {
+			name = w.BusinessName.String
+		}
+		out = append(out, map[string]any{
+			"id":         formatUUID(w.ID),
+			"name":       name,
+			"agency_id":  formatUUID(w.AgencyID),
+			"created_at": w.CreatedAt.Time,
+		})
+	}
+	return c.JSON(http.StatusOK, out)
+}

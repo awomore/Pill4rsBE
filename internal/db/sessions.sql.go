@@ -87,3 +87,48 @@ func (q *Queries) SetSessionWorkspaceByHash(ctx context.Context, arg SetSessionW
 	_, err := q.db.Exec(ctx, setSessionWorkspaceByHash, arg.RefreshTokenHash, arg.WorkspaceID)
 	return err
 }
+
+const listSessionsByUser = `-- name: ListSessionsByUser :many
+SELECT id, user_id, workspace_id, refresh_token_hash, expires_at, created_at FROM sessions WHERE user_id = $1 ORDER BY created_at DESC
+`
+
+func (q *Queries) ListSessionsByUser(ctx context.Context, userID pgtype.UUID) ([]Session, error) {
+	rows, err := q.db.Query(ctx, listSessionsByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Session
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.WorkspaceID,
+			&i.RefreshTokenHash,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deleteSessionForUser = `-- name: DeleteSessionForUser :exec
+DELETE FROM sessions WHERE id = $1 AND user_id = $2
+`
+
+type DeleteSessionForUserParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+func (q *Queries) DeleteSessionForUser(ctx context.Context, arg DeleteSessionForUserParams) error {
+	_, err := q.db.Exec(ctx, deleteSessionForUser, arg.ID, arg.UserID)
+	return err
+}

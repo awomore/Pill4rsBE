@@ -68,6 +68,7 @@ func main() {
 	agencyService := service.NewAgencyService(queries)
 	walletService := service.NewWalletService(pool, queries)
 	adminService := service.NewAdminService(queries, walletService)
+	userService := service.NewUserService(queries, adminService)
 	supportService := service.NewSupportService(pool, queries)
 	mediaStorage := service.NewLocalStorage(cfg.MediaDir, cfg.MediaPublicBaseURL)
 	mediaService := service.NewMediaService(queries, mediaStorage)
@@ -125,6 +126,7 @@ func main() {
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService, queries)
 	agencyHandler := handler.NewAgencyHandler(agencyService, cfg)
 	adminHandler := handler.NewAdminHandler(adminService, cfg)
+	userHandler := handler.NewUserHandler(userService)
 	supportHandler := handler.NewSupportHandler(supportService)
 	flutterwaveHandler := handler.NewFlutterwaveHandler(cfg, walletService, spendGuard, queries)
 
@@ -168,6 +170,13 @@ func main() {
 	e.GET("/api/workspace", workspaceHandler.GetWorkspace)
 	e.PATCH("/api/workspace", workspaceHandler.PatchWorkspace)
 	e.POST("/api/ai/chat", aiHandler.Chat)
+
+	// Signed-in user profile, sessions, and accessible workspaces.
+	e.GET("/api/user", userHandler.Profile)
+	e.POST("/api/user/password", userHandler.ChangePassword)
+	e.GET("/api/user/sessions", userHandler.Sessions)
+	e.DELETE("/api/user/sessions/:id", userHandler.RevokeSession)
+	e.GET("/api/user/workspaces", userHandler.Workspaces)
 
 	e.GET("/api/integrations", integrationsHandler.List)
 	e.GET("/api/integrations/meta/connect", integrationsHandler.MetaConnect)
@@ -244,6 +253,7 @@ func main() {
 	admin := e.Group("/api/admin", middleware.RequirePlatformAdmin(adminService))
 	admin.GET("/overview", adminHandler.Overview)
 	admin.GET("/agencies", adminHandler.Agencies)
+	admin.GET("/agencies/:id/clients", adminHandler.AgencyClients)
 	admin.GET("/users", adminHandler.Users)
 	admin.GET("/admins", adminHandler.Admins)
 	admin.POST("/admins", adminHandler.GrantAdmin)
