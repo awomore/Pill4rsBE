@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/awomore/Pill4rsBE/internal/db"
 	"github.com/google/uuid"
@@ -105,4 +107,42 @@ func totalBalanceMinor(s WalletSummary) int64 {
 		}
 	}
 	return total
+}
+
+// HoldCampaign reserves wallet funds for a managed campaign. It is called
+// before activating the campaign on the platform.
+func (g *SpendGuard) HoldCampaign(ctx context.Context, workspaceID, campaignID uuid.UUID, account db.AdAccount, dailyBudget float64) error {
+	if !usesPrepaidWallet(account) {
+		return nil
+	}
+	amount := CampaignHoldAmountMinor(dailyBudget)
+	if amount <= 0 {
+		return nil
+	}
+	_, err := g.wallet.Hold(ctx, HoldRequest{
+		WorkspaceID:    workspaceID,
+		Currency:       walletCurrency(account.Currency),
+		AmountMinor:    amount,
+		SourceType:     "campaign",
+		SourceID:       campaignID.String(),
+		IdempotencyKey: "campaign:" + campaignID.String(),
+		Metadata:       map[string]any{"daily_budget": dailyBudget, "hold_days": CampaignHoldDays},
+	})
+	if errors.Is(err, ErrInsufficientBalance) {
+		return ValidationError{"your wallet balance is too low to reserve this campaign"}
+	}
+	return err
+}
+
+// ReleaseCampaign releases any remaining hold for a campaign (pause/end).
+func (g *SpendGuard) ReleaseCampaign(ctx context.Context, workspaceID, campaignID uuid.UUID) {
+	_, _ = g.wallet.ReleaseHoldBySource(ctx, workspaceID, "campaign", campaignID.String())
+}
+
+func walletCurrency(currency string) string {
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	if currency == CurrencyUSD || currency == CurrencyNGN {
+		return currency
+	}
+	return CurrencyUSD
 }

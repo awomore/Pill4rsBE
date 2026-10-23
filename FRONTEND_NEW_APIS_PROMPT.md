@@ -41,12 +41,15 @@ Returns the workspace wallet and every currency balance.
   "wallet_id": "uuid",
   "status": "active",
   "balances": [
-    { "currency": "USD", "balance_minor": 125000 },
-    { "currency": "NGN", "balance_minor": 0 }
+    { "currency": "USD", "balance_minor": 125000, "held_minor": 20000, "cash_minor": 145000 },
+    { "currency": "NGN", "balance_minor": 0, "held_minor": 0, "cash_minor": 0 }
   ]
 }
 ```
-UI: balance cards per currency, a "low balance" warning, and a top-up CTA.
+`balance_minor` is available credit, `held_minor` is reserved for active campaigns,
+and `cash_minor` is available + held. UI: balance cards per currency, a "low
+balance" warning, and a top-up CTA. Active holds are also available at
+`GET /api/wallet/holds`.
 
 ### GET `/api/wallet/transactions?limit=50&offset=0`
 Newest-first ledger. `limit` defaults to 50, max 200.
@@ -64,7 +67,7 @@ Newest-first ledger. `limit` defaults to 50, max 200.
   }
 ]
 ```
-`kind` ∈ `topup | media_spend | commission | adjustment | refund | fx`.
+`kind` ∈ `topup | hold | release | media_spend | commission | adjustment | refund | fx`.
 `amount_minor` is **signed**: positive = credit, negative = debit. Render credits green,
 debits red. Build a paginated ledger table with a filter by kind and currency.
 `source_type` / `source_id` are optional.

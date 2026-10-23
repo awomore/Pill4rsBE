@@ -72,7 +72,37 @@ type SyncSummary struct {
 // The POST /api/sync/trigger handler invokes the very same SyncWorkspace
 // synchronously for the current user's workspace.
 func (s *SyncService) SyncWorkspace(ctx context.Context, workspaceID uuid.UUID) (SyncSummary, error) {
+	return s.SyncWorkspaceRange(ctx, workspaceID, "", "")
+}
+
+// SyncWorkspaceRange syncs an explicit date window (YYYY-MM-DD). Empty values
+// default to the last 30 days. Windows are capped at 366 days to protect
+// platform quotas; use multiple calls for longer backfills.
+func (s *SyncService) SyncWorkspaceRange(ctx context.Context, workspaceID uuid.UUID, sinceStr, untilStr string) (SyncSummary, error) {
 	var summary SyncSummary
+
+	until := time.Now().UTC()
+	if strings.TrimSpace(untilStr) != "" {
+		parsed, err := time.Parse("2006-01-02", strings.TrimSpace(untilStr))
+		if err != nil {
+			return summary, ValidationError{"until must be YYYY-MM-DD"}
+		}
+		until = parsed
+	}
+	since := until.AddDate(0, 0, -30)
+	if strings.TrimSpace(sinceStr) != "" {
+		parsed, err := time.Parse("2006-01-02", strings.TrimSpace(sinceStr))
+		if err != nil {
+			return summary, ValidationError{"since must be YYYY-MM-DD"}
+		}
+		since = parsed
+	}
+	if since.After(until) {
+		return summary, ValidationError{"since must not be after until"}
+	}
+	if until.Sub(since) > 366*24*time.Hour {
+		return summary, ValidationError{"sync window must be 366 days or fewer"}
+	}
 
 	pgWID := pgtype.UUID{Bytes: workspaceID, Valid: true}
 	accounts, err := s.queries.GetAdAccountsByWorkspace(ctx, pgWID)
@@ -80,10 +110,8 @@ func (s *SyncService) SyncWorkspace(ctx context.Context, workspaceID uuid.UUID) 
 		return summary, err
 	}
 
-	until := time.Now().UTC()
-	since := until.AddDate(0, 0, -30)
-	sinceStr := since.Format("2006-01-02")
-	untilStr := until.Format("2006-01-02")
+	sinceStr = since.Format("2006-01-02")
+	untilStr = until.Format("2006-01-02")
 
 	for _, acct := range accounts {
 		source, ok := s.sources[acct.Platform]
@@ -99,7 +127,7 @@ func (s *SyncService) SyncWorkspace(ctx context.Context, workspaceID uuid.UUID) 
 
 		campaigns, err := source.FetchCampaigns(ctx, token, acct.ExternalAccountID)
 		if err != nil {
-			slog.Error("sync: fetch campaigns failed", "ad_account", formatUUID(acct.ID), "platform", acct.Platform, "error", err)
+			slog.Error("sync: fetch campaigns failed", "ad_account", formatUUID(acct.ID), "platform", integrations.PublicPlatform(acct.Platform), "error", err)
 			continue
 		}
 
@@ -112,6 +140,8 @@ func (s *SyncService) SyncWorkspace(ctx context.Context, workspaceID uuid.UUID) 
 				Objective:          textOrNull(mc.Objective),
 				Status:             mc.Status,
 				DailyBudget:        numericFromFloat(mc.DailyBudget),
+				ExternalAdsetID:    textOrNull(mc.AdSetID),
+				ExternalAdID:       textOrNull(mc.AdID),
 			})
 			if err != nil {
 				slog.Error("sync: upsert campaign failed", "campaign", mc.ExternalID, "error", err)
@@ -168,6 +198,11 @@ func (s *SyncService) chargeCommission(ctx context.Context, workspaceID pgtype.U
 	if s.wallet == nil {
 		return
 	}
+	// DV360 is billed directly by Google (track-only): do not debit the Pill4rs
+	// wallet for its media spend or commission.
+	if acct.Platform == "dv360" {
+		return
+	}
 	spend, ok := numericToFloat(snap.Spend)
 	if !ok || spend <= 0 {
 		return
@@ -197,6 +232,13 @@ func (s *SyncService) chargeCommission(ctx context.Context, workspaceID pgtype.U
 
 	wsID := uuidFromPG(workspaceID)
 	snapID := uuidFromPG(snap.ID)
+
+	// Release held funds before fees/spend so the wallet can pay them.
+	if acct.BillingMode == "managed" {
+		if _, err := s.wallet.ConsumeHoldForSpend(ctx, wsID, chargeCurrency, "campaign", formatUUID(snap.CampaignID), baseMinor, snapID.String()); err != nil {
+			slog.Error("sync: consume wallet hold failed", "snapshot", snapID, "error", err)
+		}
+	}
 
 	if _, err := s.queries.InsertCommission(ctx, db.InsertCommissionParams{
 		WorkspaceID:     workspaceID,

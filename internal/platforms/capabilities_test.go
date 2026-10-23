@@ -7,7 +7,7 @@ func TestCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Capabilities() error: %v", err)
 	}
-	for _, key := range []string{"meta", "tiktok", "google", "linkedinads", "pinterestads", "xads", "openaiads"} {
+	for _, key := range []string{"meta", "tiktok", "google", "linkedinads", "pinterestads", "xads", "openaiads", "programmatic"} {
 		c, ok := caps.Capabilities[key]
 		if !ok {
 			t.Errorf("missing platform %q", key)

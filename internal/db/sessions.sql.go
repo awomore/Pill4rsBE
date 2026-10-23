@@ -12,23 +12,25 @@ import (
 )
 
 const createSession = `-- name: CreateSession :one
-INSERT INTO sessions (user_id, refresh_token_hash, expires_at)
-VALUES ($1, $2, $3)
-RETURNING id, user_id, refresh_token_hash, expires_at, created_at
+INSERT INTO sessions (user_id, workspace_id, refresh_token_hash, expires_at)
+VALUES ($1, $2, $3, $4)
+RETURNING id, user_id, workspace_id, refresh_token_hash, expires_at, created_at
 `
 
 type CreateSessionParams struct {
 	UserID           pgtype.UUID
+	WorkspaceID      pgtype.UUID
 	RefreshTokenHash string
 	ExpiresAt        pgtype.Timestamptz
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
-	row := q.db.QueryRow(ctx, createSession, arg.UserID, arg.RefreshTokenHash, arg.ExpiresAt)
+	row := q.db.QueryRow(ctx, createSession, arg.UserID, arg.WorkspaceID, arg.RefreshTokenHash, arg.ExpiresAt)
 	var i Session
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.WorkspaceID,
 		&i.RefreshTokenHash,
 		&i.ExpiresAt,
 		&i.CreatedAt,
@@ -55,7 +57,7 @@ func (q *Queries) DeleteSession(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getSessionByRefreshHash = `-- name: GetSessionByRefreshHash :one
-SELECT id, user_id, refresh_token_hash, expires_at, created_at FROM sessions WHERE refresh_token_hash = $1
+SELECT id, user_id, workspace_id, refresh_token_hash, expires_at, created_at FROM sessions WHERE refresh_token_hash = $1
 `
 
 func (q *Queries) GetSessionByRefreshHash(ctx context.Context, refreshTokenHash string) (Session, error) {
@@ -64,9 +66,24 @@ func (q *Queries) GetSessionByRefreshHash(ctx context.Context, refreshTokenHash 
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.WorkspaceID,
 		&i.RefreshTokenHash,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const setSessionWorkspaceByHash = `-- name: SetSessionWorkspaceByHash :exec
+UPDATE sessions SET workspace_id = $2 WHERE refresh_token_hash = $1
+`
+
+type SetSessionWorkspaceByHashParams struct {
+	RefreshTokenHash string
+	WorkspaceID      pgtype.UUID
+}
+
+func (q *Queries) SetSessionWorkspaceByHash(ctx context.Context, arg SetSessionWorkspaceByHashParams) error {
+	_, err := q.db.Exec(ctx, setSessionWorkspaceByHash, arg.RefreshTokenHash, arg.WorkspaceID)
+	return err
 }

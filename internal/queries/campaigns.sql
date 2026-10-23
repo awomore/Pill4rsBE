@@ -1,8 +1,11 @@
 -- name: UpsertCampaign :one
-INSERT INTO campaigns (workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO campaigns (workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget, external_adset_id, external_ad_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (ad_account_id, external_campaign_id)
-DO UPDATE SET name = EXCLUDED.name, objective = EXCLUDED.objective, status = EXCLUDED.status, daily_budget = EXCLUDED.daily_budget, updated_at = now()
+DO UPDATE SET name = EXCLUDED.name, objective = EXCLUDED.objective, status = EXCLUDED.status, daily_budget = EXCLUDED.daily_budget,
+              external_adset_id = COALESCE(EXCLUDED.external_adset_id, campaigns.external_adset_id),
+              external_ad_id = COALESCE(EXCLUDED.external_ad_id, campaigns.external_ad_id),
+              updated_at = now()
 RETURNING *;
 
 -- name: GetCampaignsByWorkspace :many

@@ -281,3 +281,35 @@ func microStringToMajor(s string) float64 {
 	}
 	return float64(n) / 1_000_000
 }
+
+// CreateCustomerClient creates a new Google Ads customer under a manager (MCC)
+// account. The stored refresh token must belong to a user with access to the
+// manager account; the login-customer-id header is configured on the client.
+func (c *Client) CreateCustomerClient(ctx context.Context, refreshToken, managerCustomerID, name, currencyCode, timeZone string) (string, error) {
+	at, err := c.accessToken(ctx, refreshToken)
+	if err != nil {
+		return "", err
+	}
+	path := fmt.Sprintf("/customers/%s:createCustomerClient", managerCustomerID)
+	body := map[string]any{
+		"customerClient": map[string]any{
+			"descriptiveName": name,
+			"currencyCode":    currencyCode,
+			"timeZone":        timeZone,
+		},
+	}
+	raw, err := c.adsPost(ctx, at, path, body)
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		ResourceName string `json:"resourceName"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", fmt.Errorf("decode create customer client: %w", err)
+	}
+	if out.ResourceName == "" {
+		return "", fmt.Errorf("create customer client returned no resource name")
+	}
+	return lastSegment(out.ResourceName), nil
+}

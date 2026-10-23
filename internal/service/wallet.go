@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/awomore/Pill4rsBE/internal/db"
@@ -23,6 +24,8 @@ const (
 // Ledger transaction kinds.
 const (
 	TxKindTopUp      = "topup"
+	TxKindHold       = "hold"
+	TxKindRelease    = "release"
 	TxKindMediaSpend = "media_spend"
 	TxKindCommission = "commission"
 	TxKindAdjustment = "adjustment"
@@ -36,9 +39,10 @@ var ErrInsufficientBalance = errors.New("insufficient wallet balance")
 // WalletService owns the prepaid wallet and its append-only ledger. Every
 // mutation goes through Apply, which is atomic and idempotent.
 type WalletService struct {
-	pool    *pgxpool.Pool
-	queries *db.Queries
-	onDebit func(ctx context.Context, workspaceID uuid.UUID)
+	pool     *pgxpool.Pool
+	queries  *db.Queries
+	onDebit  func(ctx context.Context, workspaceID uuid.UUID)
+	onCredit func(ctx context.Context, workspaceID uuid.UUID)
 }
 
 func NewWalletService(pool *pgxpool.Pool, queries *db.Queries) *WalletService {
@@ -51,10 +55,18 @@ func (s *WalletService) SetOnDebit(fn func(ctx context.Context, workspaceID uuid
 	s.onDebit = fn
 }
 
+// SetOnCredit registers a hook invoked after any successful credit, used to
+// keep managed-platform spend caps in sync with funded wallets.
+func (s *WalletService) SetOnCredit(fn func(ctx context.Context, workspaceID uuid.UUID)) {
+	s.onCredit = fn
+}
+
 // CurrencyBalance is one currency's available balance in minor units.
 type CurrencyBalance struct {
 	Currency     string `json:"currency"`
 	BalanceMinor int64  `json:"balance_minor"`
+	HeldMinor    int64  `json:"held_minor"`
+	CashMinor    int64  `json:"cash_minor"`
 }
 
 // WalletSummary is the wallet plus every currency balance.
@@ -91,9 +103,15 @@ func (s *WalletService) Summary(ctx context.Context, workspaceID uuid.UUID) (Wal
 	if err != nil {
 		return WalletSummary{}, err
 	}
+	held, _ := s.HeldTotals(ctx, workspaceID)
 	out := WalletSummary{WalletID: uuidFromPG(w.ID), Status: w.Status}
 	for _, b := range balances {
-		out.Balances = append(out.Balances, CurrencyBalance{Currency: b.Currency, BalanceMinor: b.BalanceMinor})
+		out.Balances = append(out.Balances, CurrencyBalance{
+			Currency:     b.Currency,
+			BalanceMinor: b.BalanceMinor,
+			HeldMinor:    held[b.Currency],
+			CashMinor:    b.BalanceMinor + held[b.Currency],
+		})
 	}
 	return out, nil
 }
@@ -195,7 +213,14 @@ func (s *WalletService) Credit(ctx context.Context, e LedgerEntry) (db.WalletTra
 	if e.AmountMinor <= 0 {
 		return db.WalletTransaction{}, ValidationError{"credit amount must be positive"}
 	}
-	return s.Apply(ctx, e)
+	t, err := s.Apply(ctx, e)
+	if err != nil {
+		return t, err
+	}
+	if s.onCredit != nil {
+		s.onCredit(ctx, e.WorkspaceID)
+	}
+	return t, nil
 }
 
 // Debit removes funds. It triggers the on-debit hook so the spend guard can
@@ -290,4 +315,58 @@ func numericOrNullPtr(f *float64) pgtype.Numeric {
 		return pgtype.Numeric{}
 	}
 	return numericFromFloat(*f)
+}
+
+// TotalTopUps returns lifetime confirmed top-ups in a currency, in minor units.
+func (s *WalletService) TotalTopUps(ctx context.Context, workspaceID uuid.UUID, currency string) (int64, error) {
+	currency, err := normalizeCurrency(currency)
+	if err != nil {
+		return 0, err
+	}
+	w, err := s.Ensure(ctx, workspaceID)
+	if err != nil {
+		return 0, err
+	}
+	return s.queries.SumWalletTopUps(ctx, db.SumWalletTopUpsParams{
+		WalletID: w.ID,
+		Currency: currency,
+	})
+}
+
+// TotalTopUpsIn returns lifetime top-ups converted into targetCurrency. Both
+// supported currencies use 2 decimal minor units. A non-positive ngnPerUSD
+// disables cross-currency conversion.
+func (s *WalletService) TotalTopUpsIn(ctx context.Context, workspaceID uuid.UUID, targetCurrency string, ngnPerUSD float64) (int64, error) {
+	target, err := normalizeCurrency(targetCurrency)
+	if err != nil {
+		return 0, err
+	}
+	w, err := s.Ensure(ctx, workspaceID)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := s.queries.SumWalletTopUpsByCurrency(ctx, w.ID)
+	if err != nil {
+		return 0, err
+	}
+	totals := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		totals[r.Currency] = r.TotalMinor
+	}
+	return convertTopUps(totals, target, ngnPerUSD), nil
+}
+
+func convertTopUps(totals map[string]int64, target string, ngnPerUSD float64) int64 {
+	if target == CurrencyNGN {
+		total := totals[CurrencyNGN]
+		if ngnPerUSD > 0 {
+			total += int64(math.Round(float64(totals[CurrencyUSD]) * ngnPerUSD))
+		}
+		return total
+	}
+	total := totals[CurrencyUSD]
+	if ngnPerUSD > 0 {
+		total += int64(math.Round(float64(totals[CurrencyNGN]) / ngnPerUSD))
+	}
+	return total
 }

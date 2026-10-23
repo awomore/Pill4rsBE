@@ -211,3 +211,46 @@ func TestOAuthRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected account id: %q", id)
 	}
 }
+
+func TestCreateManagedAdAccount(t *testing.T) {
+	var gotPath string
+	var form url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = r.ParseForm()
+		form = r.PostForm
+		_, _ = w.Write([]byte(`{"id":"act_123"}`))
+	}))
+	defer srv.Close()
+
+	id, err := newTestClient(srv.URL).CreateManagedAdAccount(context.Background(), "token", "biz1", "Client A", "usd", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "act_123" {
+		t.Errorf("id = %q", id)
+	}
+	if gotPath != "/v21.0/biz1/adaccounts" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if form.Get("name") != "Client A" || form.Get("currency") != "USD" || form.Get("timezone_id") != "1" {
+		t.Errorf("form = %v", form)
+	}
+}
+
+func TestSetSpendCap(t *testing.T) {
+	var form url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		form = r.PostForm
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer srv.Close()
+
+	if err := newTestClient(srv.URL).SetSpendCap(context.Background(), "token", "act_123", 50000); err != nil {
+		t.Fatal(err)
+	}
+	if form.Get("spend_cap") != "50000" {
+		t.Errorf("spend_cap = %q", form.Get("spend_cap"))
+	}
+}

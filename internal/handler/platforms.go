@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/awomore/Pill4rsBE/internal/db"
+	"github.com/awomore/Pill4rsBE/internal/integrations"
 	"github.com/awomore/Pill4rsBE/internal/platforms"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -54,7 +55,7 @@ func (h *PlatformsHandler) Overview(c echo.Context) error {
 	}
 	counts := map[string]int{}
 	for _, a := range accounts {
-		counts[a.Platform]++
+		counts[integrations.PublicPlatform(a.Platform)]++
 	}
 
 	caps, _ := platforms.Capabilities()

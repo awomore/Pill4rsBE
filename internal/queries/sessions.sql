@@ -1,7 +1,10 @@
 -- name: CreateSession :one
-INSERT INTO sessions (user_id, refresh_token_hash, expires_at)
-VALUES ($1, $2, $3)
+INSERT INTO sessions (user_id, workspace_id, refresh_token_hash, expires_at)
+VALUES ($1, $2, $3, $4)
 RETURNING *;
+
+-- name: SetSessionWorkspaceByHash :exec
+UPDATE sessions SET workspace_id = $2 WHERE refresh_token_hash = $1;
 
 -- name: GetSessionByRefreshHash :one
 SELECT * FROM sessions WHERE refresh_token_hash = $1;

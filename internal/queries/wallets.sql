@@ -63,3 +63,16 @@ RETURNING *;
 
 -- name: GetProviderEvent :one
 SELECT * FROM provider_events WHERE event_id = $1;
+
+-- name: GetWalletBalanceForUpdate :one
+SELECT * FROM wallet_balances WHERE wallet_id = $1 AND currency = $2 FOR UPDATE;
+
+-- name: SumWalletTopUps :one
+SELECT COALESCE(SUM(amount_minor), 0)::bigint FROM wallet_transactions
+WHERE wallet_id = $1 AND currency = $2 AND kind = 'topup' AND amount_minor > 0;
+
+-- name: SumWalletTopUpsByCurrency :many
+SELECT currency, COALESCE(SUM(amount_minor), 0)::bigint AS total_minor
+FROM wallet_transactions
+WHERE wallet_id = $1 AND kind = 'topup' AND amount_minor > 0
+GROUP BY currency;

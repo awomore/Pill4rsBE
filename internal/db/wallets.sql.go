@@ -381,3 +381,68 @@ func (q *Queries) SetBillingProfileProvider(ctx context.Context, arg SetBillingP
 	)
 	return i, err
 }
+
+const getWalletBalanceForUpdate = `-- name: GetWalletBalanceForUpdate :one
+SELECT id, wallet_id, currency, balance_minor, updated_at FROM wallet_balances WHERE wallet_id = $1 AND currency = $2 FOR UPDATE
+`
+
+type GetWalletBalanceForUpdateParams struct {
+	WalletID pgtype.UUID
+	Currency string
+}
+
+func (q *Queries) GetWalletBalanceForUpdate(ctx context.Context, arg GetWalletBalanceForUpdateParams) (WalletBalance, error) {
+	row := q.db.QueryRow(ctx, getWalletBalanceForUpdate, arg.WalletID, arg.Currency)
+	var i WalletBalance
+	err := row.Scan(&i.ID, &i.WalletID, &i.Currency, &i.BalanceMinor, &i.UpdatedAt)
+	return i, err
+}
+
+const sumWalletTopUps = `-- name: SumWalletTopUps :one
+SELECT COALESCE(SUM(amount_minor), 0)::bigint FROM wallet_transactions
+WHERE wallet_id = $1 AND currency = $2 AND kind = 'topup' AND amount_minor > 0
+`
+
+type SumWalletTopUpsParams struct {
+	WalletID pgtype.UUID
+	Currency string
+}
+
+func (q *Queries) SumWalletTopUps(ctx context.Context, arg SumWalletTopUpsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, sumWalletTopUps, arg.WalletID, arg.Currency)
+	var total int64
+	err := row.Scan(&total)
+	return total, err
+}
+
+const sumWalletTopUpsByCurrency = `-- name: SumWalletTopUpsByCurrency :many
+SELECT currency, COALESCE(SUM(amount_minor), 0)::bigint AS total_minor
+FROM wallet_transactions
+WHERE wallet_id = $1 AND kind = 'topup' AND amount_minor > 0
+GROUP BY currency
+`
+
+type SumWalletTopUpsByCurrencyRow struct {
+	Currency   string
+	TotalMinor int64
+}
+
+func (q *Queries) SumWalletTopUpsByCurrency(ctx context.Context, walletID pgtype.UUID) ([]SumWalletTopUpsByCurrencyRow, error) {
+	rows, err := q.db.Query(ctx, sumWalletTopUpsByCurrency, walletID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SumWalletTopUpsByCurrencyRow
+	for rows.Next() {
+		var i SumWalletTopUpsByCurrencyRow
+		if err := rows.Scan(&i.Currency, &i.TotalMinor); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

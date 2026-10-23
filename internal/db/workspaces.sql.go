@@ -14,7 +14,7 @@ import (
 const createWorkspace = `-- name: CreateWorkspace :one
 INSERT INTO workspaces (user_id)
 VALUES ($1)
-RETURNING id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id
+RETURNING id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id, agency_id, client_label
 `
 
 func (q *Queries) CreateWorkspace(ctx context.Context, userID pgtype.UUID) (Workspace, error) {
@@ -35,12 +35,14 @@ func (q *Queries) CreateWorkspace(ctx context.Context, userID pgtype.UUID) (Work
 		&i.SpendStateReason,
 		&i.CommissionRateBps,
 		&i.ZernioProfileID,
+		&i.AgencyID,
+		&i.ClientLabel,
 	)
 	return i, err
 }
 
 const getWorkspaceByID = `-- name: GetWorkspaceByID :one
-SELECT id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id FROM workspaces WHERE id = $1
+SELECT id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id, agency_id, client_label FROM workspaces WHERE id = $1
 `
 
 func (q *Queries) GetWorkspaceByID(ctx context.Context, id pgtype.UUID) (Workspace, error) {
@@ -61,12 +63,14 @@ func (q *Queries) GetWorkspaceByID(ctx context.Context, id pgtype.UUID) (Workspa
 		&i.SpendStateReason,
 		&i.CommissionRateBps,
 		&i.ZernioProfileID,
+		&i.AgencyID,
+		&i.ClientLabel,
 	)
 	return i, err
 }
 
 const getWorkspaceByUserID = `-- name: GetWorkspaceByUserID :one
-SELECT id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id FROM workspaces WHERE user_id = $1
+SELECT id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id, agency_id, client_label FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1
 `
 
 func (q *Queries) GetWorkspaceByUserID(ctx context.Context, userID pgtype.UUID) (Workspace, error) {
@@ -87,6 +91,8 @@ func (q *Queries) GetWorkspaceByUserID(ctx context.Context, userID pgtype.UUID) 
 		&i.SpendStateReason,
 		&i.CommissionRateBps,
 		&i.ZernioProfileID,
+		&i.AgencyID,
+		&i.ClientLabel,
 	)
 	return i, err
 }
@@ -95,7 +101,7 @@ const setOnboardingComplete = `-- name: SetOnboardingComplete :one
 UPDATE workspaces
 SET onboarding_complete = true, updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id
+RETURNING id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id, agency_id, client_label
 `
 
 func (q *Queries) SetOnboardingComplete(ctx context.Context, id pgtype.UUID) (Workspace, error) {
@@ -116,6 +122,8 @@ func (q *Queries) SetOnboardingComplete(ctx context.Context, id pgtype.UUID) (Wo
 		&i.SpendStateReason,
 		&i.CommissionRateBps,
 		&i.ZernioProfileID,
+		&i.AgencyID,
+		&i.ClientLabel,
 	)
 	return i, err
 }
@@ -124,7 +132,7 @@ const setWorkspaceCommissionRate = `-- name: SetWorkspaceCommissionRate :one
 UPDATE workspaces
 SET commission_rate_bps = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id
+RETURNING id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id, agency_id, client_label
 `
 
 type SetWorkspaceCommissionRateParams struct {
@@ -150,6 +158,8 @@ func (q *Queries) SetWorkspaceCommissionRate(ctx context.Context, arg SetWorkspa
 		&i.SpendStateReason,
 		&i.CommissionRateBps,
 		&i.ZernioProfileID,
+		&i.AgencyID,
+		&i.ClientLabel,
 	)
 	return i, err
 }
@@ -158,7 +168,7 @@ const setWorkspaceSpendState = `-- name: SetWorkspaceSpendState :one
 UPDATE workspaces
 SET spend_state = $2, spend_state_reason = $3, updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id
+RETURNING id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id, agency_id, client_label
 `
 
 type SetWorkspaceSpendStateParams struct {
@@ -185,6 +195,8 @@ func (q *Queries) SetWorkspaceSpendState(ctx context.Context, arg SetWorkspaceSp
 		&i.SpendStateReason,
 		&i.CommissionRateBps,
 		&i.ZernioProfileID,
+		&i.AgencyID,
+		&i.ClientLabel,
 	)
 	return i, err
 }
@@ -193,7 +205,7 @@ const setWorkspaceZernioProfile = `-- name: SetWorkspaceZernioProfile :one
 UPDATE workspaces
 SET zernio_profile_id = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id
+RETURNING id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id, agency_id, client_label
 `
 
 type SetWorkspaceZernioProfileParams struct {
@@ -219,6 +231,8 @@ func (q *Queries) SetWorkspaceZernioProfile(ctx context.Context, arg SetWorkspac
 		&i.SpendStateReason,
 		&i.CommissionRateBps,
 		&i.ZernioProfileID,
+		&i.AgencyID,
+		&i.ClientLabel,
 	)
 	return i, err
 }
@@ -227,7 +241,7 @@ const updateWorkspaceProfile = `-- name: UpdateWorkspaceProfile :one
 UPDATE workspaces
 SET business_name = $2, industry = $3, monthly_budget = $4, primary_goal = $5, target_audience = $6, updated_at = now()
 WHERE id = $1
-RETURNING id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id
+RETURNING id, user_id, business_name, industry, monthly_budget, primary_goal, target_audience, onboarding_complete, created_at, updated_at, spend_state, spend_state_reason, commission_rate_bps, zernio_profile_id, agency_id, client_label
 `
 
 type UpdateWorkspaceProfileParams struct {
@@ -264,6 +278,8 @@ func (q *Queries) UpdateWorkspaceProfile(ctx context.Context, arg UpdateWorkspac
 		&i.SpendStateReason,
 		&i.CommissionRateBps,
 		&i.ZernioProfileID,
+		&i.AgencyID,
+		&i.ClientLabel,
 	)
 	return i, err
 }

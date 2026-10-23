@@ -1,8 +1,12 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"math"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestNumericFromFloat(t *testing.T) {
@@ -50,5 +54,28 @@ func TestTextOrNull(t *testing.T) {
 	v := textOrNull("OUTCOME_SALES")
 	if !v.Valid || v.String != "OUTCOME_SALES" {
 		t.Errorf("unexpected text value: %+v", v)
+	}
+}
+
+func TestSyncWorkspaceRangeValidation(t *testing.T) {
+	s := &SyncService{}
+	cases := []struct {
+		name  string
+		since string
+		until string
+	}{
+		{"bad since", "10-01-2026", "2026-10-02"},
+		{"bad until", "2026-10-01", "nope"},
+		{"reversed", "2026-10-10", "2026-10-01"},
+		{"too long", "2024-01-01", "2026-10-01"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := s.SyncWorkspaceRange(context.Background(), uuid.New(), tc.since, tc.until)
+			var ve ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("expected ValidationError, got %v", err)
+			}
+		})
 	}
 }

@@ -261,3 +261,134 @@ func TestFetchInsights(t *testing.T) {
 		t.Errorf("metrics = %+v", r)
 	}
 }
+
+func TestCreateCustomerClient(t *testing.T) {
+	var gotLogin, gotPath string
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/token"):
+			writeToken(w, r)
+		case strings.HasSuffix(r.URL.Path, ":createCustomerClient"):
+			gotPath = r.URL.Path
+			gotLogin = r.Header.Get("login-customer-id")
+			raw, _ := io.ReadAll(r.Body)
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = w.Write([]byte(`{"resourceName":"customers/999"}`))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient("client-id", "client-secret", "https://api.example.com/cb", "dev-token", "mcc-1")
+	c.oauthBaseURL = srv.URL
+	c.adsBaseURL = srv.URL
+
+	id, err := c.CreateCustomerClient(context.Background(), "rt", "mcc-1", "Client A", "USD", "America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "999" {
+		t.Errorf("id = %q", id)
+	}
+	if gotPath != "/v17/customers/mcc-1:createCustomerClient" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotLogin != "mcc-1" {
+		t.Errorf("login-customer-id = %q", gotLogin)
+	}
+	client, _ := got["customerClient"].(map[string]any)
+	if client["descriptiveName"] != "Client A" || client["currencyCode"] != "USD" {
+		t.Errorf("body = %v", got)
+	}
+}
+
+func TestSetAccountSpendCapUpdateExistingBudget(t *testing.T) {
+	var proposal map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/token"):
+			writeToken(w, r)
+		case strings.Contains(r.URL.Path, "googleAds:search"):
+			raw, _ := io.ReadAll(r.Body)
+			var q map[string]string
+			_ = json.Unmarshal(raw, &q)
+			if strings.Contains(q["query"], "account_budget") {
+				_, _ = w.Write([]byte(`{"results":[{"accountBudget":{"resourceName":"customers/123/accountBudgets/1"}}]}`))
+			} else {
+				_, _ = w.Write([]byte(`{"results":[]}`))
+			}
+		case strings.Contains(r.URL.Path, "accountBudgetProposals:mutate"):
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &proposal)
+			_, _ = w.Write([]byte(`{"result":{"resourceName":"customers/123/accountBudgetProposals/9"}}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient("id", "secret", "https://x/cb", "dev", "")
+	c.oauthBaseURL = srv.URL
+	c.adsBaseURL = srv.URL
+
+	res, err := c.SetAccountSpendCap(context.Background(), "rt", "123", 50000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ResourceName != "customers/123/accountBudgetProposals/9" {
+		t.Errorf("result = %+v", res)
+	}
+	op, _ := proposal["operation"].(map[string]any)
+	create, _ := op["create"].(map[string]any)
+	if create["proposalType"] != "UPDATE" || create["accountBudget"] != "customers/123/accountBudgets/1" {
+		t.Errorf("proposal = %v", create)
+	}
+	if create["proposedSpendingLimitMicros"] != "500000000" {
+		t.Errorf("micros = %v", create["proposedSpendingLimitMicros"])
+	}
+}
+
+func TestSetAccountSpendCapCreateWithBillingSetup(t *testing.T) {
+	var proposal map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/token"):
+			writeToken(w, r)
+		case strings.Contains(r.URL.Path, "googleAds:search"):
+			raw, _ := io.ReadAll(r.Body)
+			var q map[string]string
+			_ = json.Unmarshal(raw, &q)
+			if strings.Contains(q["query"], "account_budget") {
+				_, _ = w.Write([]byte(`{"results":[]}`))
+			} else if strings.Contains(q["query"], "billing_setup") {
+				_, _ = w.Write([]byte(`{"results":[{"billingSetup":{"resourceName":"customers/123/billingSetups/7"}}]}`))
+			} else {
+				_, _ = w.Write([]byte(`{"results":[]}`))
+			}
+		case strings.Contains(r.URL.Path, "accountBudgetProposals:mutate"):
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &proposal)
+			_, _ = w.Write([]byte(`{"result":{"resourceName":"customers/123/accountBudgetProposals/10"}}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient("id", "secret", "https://x/cb", "dev", "")
+	c.oauthBaseURL = srv.URL
+	c.adsBaseURL = srv.URL
+
+	if _, err := c.SetAccountSpendCap(context.Background(), "rt", "123", 100); err != nil {
+		t.Fatal(err)
+	}
+	op, _ := proposal["operation"].(map[string]any)
+	create, _ := op["create"].(map[string]any)
+	if create["proposalType"] != "CREATE" || create["billingSetup"] != "customers/123/billingSetups/7" {
+		t.Errorf("proposal = %v", create)
+	}
+}

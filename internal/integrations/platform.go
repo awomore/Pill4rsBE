@@ -357,12 +357,17 @@ type MediaUploader interface {
 }
 
 // NormalizedCampaign is a platform-agnostic campaign as read back during sync.
+// AdSetID/AdID/CreativeID are optional sub-object identifiers so campaigns
+// created outside Pill4rs can still be managed (budget, pause/resume).
 type NormalizedCampaign struct {
 	ExternalID  string
 	Name        string
 	Objective   string
 	Status      string
 	DailyBudget float64
+	AdSetID     string
+	AdID        string
+	CreativeID  string
 }
 
 // CampaignDataSource reads a platform's campaigns and insights for syncing into
@@ -371,4 +376,23 @@ type CampaignDataSource interface {
 	Platform() string
 	FetchCampaigns(ctx context.Context, accessToken, accountID string) ([]NormalizedCampaign, error)
 	FetchInsights(ctx context.Context, accessToken, accountID, campaignID, since, until string) ([]NormalizedInsight, error)
+}
+
+// PublicPlatform maps an internal driver key to the platform name exposed to
+// API consumers. The DSP backbone is intentionally abstracted: internal code
+// uses "dv360", while clients see "programmatic".
+func PublicPlatform(platform string) string {
+	if platform == "dv360" {
+		return "programmatic"
+	}
+	return platform
+}
+
+// InternalPlatform maps a client-facing platform name back to the internal
+// driver key.
+func InternalPlatform(platform string) string {
+	if platform == "programmatic" {
+		return "dv360"
+	}
+	return platform
 }

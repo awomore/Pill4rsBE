@@ -513,10 +513,13 @@ func (q *Queries) UpdateCampaignStatus(ctx context.Context, arg UpdateCampaignSt
 }
 
 const upsertCampaign = `-- name: UpsertCampaign :one
-INSERT INTO campaigns (workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO campaigns (workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget, external_adset_id, external_ad_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (ad_account_id, external_campaign_id)
-DO UPDATE SET name = EXCLUDED.name, objective = EXCLUDED.objective, status = EXCLUDED.status, daily_budget = EXCLUDED.daily_budget, updated_at = now()
+DO UPDATE SET name = EXCLUDED.name, objective = EXCLUDED.objective, status = EXCLUDED.status, daily_budget = EXCLUDED.daily_budget,
+              external_adset_id = COALESCE(EXCLUDED.external_adset_id, campaigns.external_adset_id),
+              external_ad_id = COALESCE(EXCLUDED.external_ad_id, campaigns.external_ad_id),
+              updated_at = now()
 RETURNING id, workspace_id, ad_account_id, external_campaign_id, name, objective, status, daily_budget, created_at, updated_at, start_date, end_date, cta, targeting, external_adset_id, external_ad_id, external_creative_id, creative, bid_strategy, bid_cap, pacing_type, frequency_cap, frequency_cap_time_unit, variants, provenance, rationale
 `
 
@@ -528,6 +531,8 @@ type UpsertCampaignParams struct {
 	Objective          pgtype.Text
 	Status             string
 	DailyBudget        pgtype.Numeric
+	ExternalAdsetID    pgtype.Text
+	ExternalAdID       pgtype.Text
 }
 
 func (q *Queries) UpsertCampaign(ctx context.Context, arg UpsertCampaignParams) (Campaign, error) {
@@ -539,6 +544,8 @@ func (q *Queries) UpsertCampaign(ctx context.Context, arg UpsertCampaignParams) 
 		arg.Objective,
 		arg.Status,
 		arg.DailyBudget,
+		arg.ExternalAdsetID,
+		arg.ExternalAdID,
 	)
 	var i Campaign
 	err := row.Scan(

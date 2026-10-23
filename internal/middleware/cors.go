@@ -9,5 +9,9 @@ func CORS(origin string) echo.MiddlewareFunc {
 	return echomw.CORSWithConfig(echomw.CORSConfig{
 		AllowOrigins:     []string{origin},
 		AllowCredentials: true,
+		AllowHeaders: []string{
+			echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization,
+			"X-API-Key", "X-Client-Id", "Idempotency-Key",
+		},
 	})
 }

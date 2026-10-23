@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -30,8 +31,19 @@ var (
 )
 
 type AuthService struct {
-	queries   *db.Queries
-	jwtSecret []byte
+	adminEmails map[string]struct{}
+	queries     *db.Queries
+	jwtSecret   []byte
+}
+
+func (s *AuthService) SetPlatformAdminEmails(emails []string) {
+	m := make(map[string]struct{}, len(emails))
+	for _, e := range emails {
+		if e = strings.TrimSpace(strings.ToLower(e)); e != "" {
+			m[e] = struct{}{}
+		}
+	}
+	s.adminEmails = m
 }
 
 func NewAuthService(queries *db.Queries, jwtSecret []byte) *AuthService {
@@ -80,10 +92,12 @@ func (s *AuthService) Signup(ctx context.Context, email, password string) (*Auth
 		return nil, fmt.Errorf("create user: %w", err)
 	}
 
+	s.grantAdminIfConfigured(ctx, user.ID, email)
 	workspace, err := s.queries.CreateWorkspace(ctx, user.ID)
 	if err != nil {
 		return nil, fmt.Errorf("create workspace: %w", err)
 	}
+	s.ensureAgencyForWorkspace(ctx, user.ID, workspace.ID)
 
 	tokens, err := s.issueTokens(ctx, user.ID, workspace.ID)
 	if err != nil {
@@ -145,13 +159,17 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 		return nil, ErrSessionExpired
 	}
 
-	workspace, err := s.queries.GetWorkspaceByUserID(ctx, session.UserID)
-	if err != nil {
-		return nil, fmt.Errorf("get workspace: %w", err)
+	workspaceID := session.WorkspaceID
+	if !workspaceID.Valid {
+		workspace, err := s.queries.GetWorkspaceByUserID(ctx, session.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("get workspace: %w", err)
+		}
+		workspaceID = workspace.ID
 	}
 
 	s.queries.DeleteSession(ctx, session.ID)
-	tokens, err := s.issueTokens(ctx, session.UserID, workspace.ID)
+	tokens, err := s.issueTokens(ctx, session.UserID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -182,6 +200,7 @@ func (s *AuthService) GoogleCallback(ctx context.Context, code, clientID, client
 		if err != nil {
 			return nil, fmt.Errorf("create user: %w", err)
 		}
+		s.grantAdminIfConfigured(ctx, user.ID, email)
 	}
 
 	workspace, err := s.queries.GetWorkspaceByUserID(ctx, user.ID)
@@ -190,6 +209,9 @@ func (s *AuthService) GoogleCallback(ctx context.Context, code, clientID, client
 		if err != nil {
 			return nil, fmt.Errorf("create workspace: %w", err)
 		}
+	}
+	if !workspace.AgencyID.Valid {
+		s.ensureAgencyForWorkspace(ctx, user.ID, workspace.ID)
 	}
 
 	tokens, err := s.issueTokens(ctx, user.ID, workspace.ID)
@@ -204,6 +226,45 @@ func (s *AuthService) GoogleCallback(ctx context.Context, code, clientID, client
 			OnboardingComplete: workspace.OnboardingComplete,
 		},
 	}, nil
+}
+
+func (s *AuthService) grantAdminIfConfigured(ctx context.Context, userID pgtype.UUID, email string) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	if _, ok := s.adminEmails[email]; !ok {
+		return
+	}
+	if _, err := s.queries.UpsertPlatformAdmin(ctx, db.UpsertPlatformAdminParams{UserID: userID}); err != nil {
+		slog.Error("grant bootstrap platform admin failed", "email", email, "error", err)
+	}
+}
+
+func (s *AuthService) ensureAgencyForWorkspace(ctx context.Context, userID, workspaceID pgtype.UUID) {
+	ws, err := s.queries.GetWorkspaceByID(ctx, workspaceID)
+	if err != nil || ws.AgencyID.Valid {
+		return
+	}
+	agency, err := s.queries.CreateAgency(ctx, db.CreateAgencyParams{
+		OwnerUserID: userID,
+		Name:        "My Agency",
+	})
+	if err != nil {
+		slog.Error("create agency for workspace failed", "workspace", formatUUID(workspaceID), "error", err)
+		return
+	}
+	if _, err := s.queries.AddAgencyMember(ctx, db.AddAgencyMemberParams{
+		AgencyID: agency.ID,
+		UserID:   userID,
+		Role:     AgencyRoleOwner,
+	}); err != nil {
+		slog.Error("add agency owner failed", "agency", formatUUID(agency.ID), "error", err)
+		return
+	}
+	if _, err := s.queries.SetWorkspaceAgency(ctx, db.SetWorkspaceAgencyParams{
+		ID:       workspaceID,
+		AgencyID: agency.ID,
+	}); err != nil {
+		slog.Error("link workspace to agency failed", "workspace", formatUUID(workspaceID), "error", err)
+	}
 }
 
 func exchangeGoogleCode(ctx context.Context, code, clientID, clientSecret, redirectURI string) (string, error) {
@@ -261,6 +322,7 @@ func (s *AuthService) issueTokens(ctx context.Context, userID pgtype.UUID, works
 	expiresAt := pgtype.Timestamptz{Time: time.Now().Add(7 * 24 * time.Hour), Valid: true}
 	_, err = s.queries.CreateSession(ctx, db.CreateSessionParams{
 		UserID:           userID,
+		WorkspaceID:      workspaceID,
 		RefreshTokenHash: refreshHash,
 		ExpiresAt:        expiresAt,
 	})

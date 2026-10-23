@@ -4,7 +4,7 @@ VALUES ($1)
 RETURNING *;
 
 -- name: GetWorkspaceByUserID :one
-SELECT * FROM workspaces WHERE user_id = $1;
+SELECT * FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1;
 
 -- name: UpdateWorkspaceProfile :one
 UPDATE workspaces

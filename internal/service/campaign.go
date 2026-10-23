@@ -244,11 +244,6 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 	if err := ValidateCreateInput(in); err != nil {
 		return CreateResult{}, err
 	}
-	if s.guard != nil {
-		if err := s.guard.CanSpend(ctx, workspaceID); err != nil {
-			return CreateResult{}, err
-		}
-	}
 
 	pgWID := pgtype.UUID{Bytes: workspaceID, Valid: true}
 	accounts, err := s.queries.GetAdAccountsByWorkspace(ctx, pgWID)
@@ -267,11 +262,19 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 		// Resolve from the requested platforms so "platforms: [meta]" fans out
 		// over every connected account for that driver.
 		for _, p := range dedupe(in.Platforms) {
-			for _, a := range byPlatform[p] {
+			for _, a := range byPlatform[integrations.InternalPlatform(p)] {
 				accountIDs = append(accountIDs, formatUUID(a.ID))
 			}
 		}
 		accountIDs = dedupe(accountIDs)
+	}
+
+	// DV360 is billed by Google (track-only), so it must not be blocked by the
+	// prepaid wallet. Check the guard only when a prepaid platform is involved.
+	if s.guard != nil && anyPrepaidAccount(byID, accountIDs) {
+		if err := s.guard.CanSpend(ctx, workspaceID); err != nil {
+			return CreateResult{}, err
+		}
 	}
 
 	spec := integrations.CampaignSpec{
@@ -322,7 +325,7 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 		}
 		adapter, ok := s.adapters[account.Platform]
 		if !ok {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s is not a supported platform; skipped", account.Platform))
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s is not a supported platform; skipped", integrations.PublicPlatform(account.Platform)))
 			continue
 		}
 
@@ -334,8 +337,8 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 			if externalID == "" {
 				externalID = newPlaceholderID()
 			}
-			slog.Warn("campaign delivery failed; saving draft", "platform", account.Platform, "error", attemptErr)
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: could not fully create remotely (%v); saved as draft", account.Platform, attemptErr))
+			slog.Warn("campaign delivery failed; saving draft", "platform", integrations.PublicPlatform(account.Platform), "error", attemptErr)
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: could not fully create remotely; saved as draft", integrations.PublicPlatform(account.Platform)))
 		}
 
 		row, err := s.queries.CreateCampaign(ctx, db.CreateCampaignParams{
@@ -364,11 +367,11 @@ func (s *CampaignService) CreateCampaign(ctx context.Context, workspaceID uuid.U
 			Rationale:            rationaleJSON,
 		})
 		if err != nil {
-			slog.Error("failed to persist campaign", "platform", account.Platform, "error", err)
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: failed to save campaign", account.Platform))
+			slog.Error("failed to persist campaign", "platform", integrations.PublicPlatform(account.Platform), "error", err)
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: failed to save campaign", integrations.PublicPlatform(account.Platform)))
 			continue
 		}
-		result.Created = append(result.Created, CreatedCampaignResult{Campaign: row, Platform: account.Platform})
+		result.Created = append(result.Created, CreatedCampaignResult{Campaign: row, Platform: integrations.PublicPlatform(account.Platform)})
 	}
 
 	if len(result.Created) == 0 {
@@ -394,11 +397,6 @@ func (s *CampaignService) LaunchCampaign(ctx context.Context, workspaceID, campa
 	if camp.Status != StatusDraft {
 		return db.Campaign{}, "", ValidationError{"campaign is not a launchable draft"}
 	}
-	if s.guard != nil {
-		if err := s.guard.CanSpend(ctx, workspaceID); err != nil {
-			return db.Campaign{}, "", err
-		}
-	}
 
 	account, err := s.queries.GetAdAccountByID(ctx, camp.AdAccountID)
 	if err != nil {
@@ -406,7 +404,12 @@ func (s *CampaignService) LaunchCampaign(ctx context.Context, workspaceID, campa
 	}
 	adapter, ok := s.adapters[account.Platform]
 	if !ok {
-		return db.Campaign{}, "", ValidationError{fmt.Sprintf("%s is no longer a supported platform", account.Platform)}
+		return db.Campaign{}, "", ValidationError{fmt.Sprintf("%s is no longer a supported platform", integrations.PublicPlatform(account.Platform))}
+	}
+	if s.guard != nil && usesPrepaidWallet(account) {
+		if err := s.guard.CanSpend(ctx, workspaceID); err != nil {
+			return db.Campaign{}, "", err
+		}
 	}
 
 	// Re-validate readiness.
@@ -417,13 +420,15 @@ func (s *CampaignService) LaunchCampaign(ctx context.Context, workspaceID, campa
 	if !ok || budget < MinDailyBudget {
 		return db.Campaign{}, "", ValidationError{"campaign has no valid budget"}
 	}
-	if textValue(account.PageID) == "" {
-		return db.Campaign{}, "", ValidationError{"connect a Facebook page to this ad account before launching"}
-	}
-	if camp.Objective.Valid {
-		obj := integrations.CampaignObjective(camp.Objective.String)
-		if (obj == integrations.ObjectiveSales || obj == integrations.ObjectiveLeads) && textValue(account.PixelID) == "" {
-			return db.Campaign{}, "", ValidationError{"connect a Meta pixel to this ad account before launching a sales or leads campaign"}
+	if account.Platform == "meta" {
+		if textValue(account.PageID) == "" {
+			return db.Campaign{}, "", ValidationError{"connect a Facebook page to this ad account before launching"}
+		}
+		if camp.Objective.Valid {
+			obj := integrations.CampaignObjective(camp.Objective.String)
+			if (obj == integrations.ObjectiveSales || obj == integrations.ObjectiveLeads) && textValue(account.PixelID) == "" {
+				return db.Campaign{}, "", ValidationError{"connect a Meta pixel to this ad account before launching a sales or leads campaign"}
+			}
 		}
 	}
 	spec := specFromCampaign(camp, budget)
@@ -467,18 +472,13 @@ func (s *CampaignService) LaunchCampaign(ctx context.Context, workspaceID, campa
 	if err != nil {
 		return db.Campaign{}, "", fmt.Errorf("persist launch: %w", err)
 	}
-	return updated, account.Platform, nil
+	return updated, integrations.PublicPlatform(account.Platform), nil
 }
 
 // SetCampaignStatus pauses or resumes a live campaign (and persists the status).
 func (s *CampaignService) SetCampaignStatus(ctx context.Context, workspaceID, campaignID uuid.UUID, status string) (db.Campaign, string, error) {
 	if status != StatusActive && status != StatusPaused {
 		return db.Campaign{}, "", ValidationError{"status must be ACTIVE or PAUSED"}
-	}
-	if status == StatusActive && s.guard != nil {
-		if err := s.guard.CanSpend(ctx, workspaceID); err != nil {
-			return db.Campaign{}, "", err
-		}
 	}
 
 	camp, err := s.queries.GetCampaignByIDForWorkspace(ctx, db.GetCampaignByIDForWorkspaceParams{
@@ -501,15 +501,35 @@ func (s *CampaignService) SetCampaignStatus(ctx context.Context, workspaceID, ca
 	}
 	adapter, ok := s.adapters[account.Platform]
 	if !ok {
-		return db.Campaign{}, "", ValidationError{fmt.Sprintf("%s is no longer a supported platform", account.Platform)}
+		return db.Campaign{}, "", ValidationError{fmt.Sprintf("%s is no longer a supported platform", integrations.PublicPlatform(account.Platform))}
+	}
+	held := false
+	if status == StatusActive && s.guard != nil && usesPrepaidWallet(account) {
+		if err := s.guard.CanSpend(ctx, workspaceID); err != nil {
+			return db.Campaign{}, "", err
+		}
+		budget, _ := numericToFloat(camp.DailyBudget)
+		if err := s.guard.HoldCampaign(ctx, workspaceID, campaignID, account, budget); err != nil {
+			return db.Campaign{}, "", err
+		}
+		held = true
 	}
 
 	token, err := crypto.DecryptToken(account.AccessTokenEncrypted, s.encKey)
 	if err != nil {
+		if held && s.guard != nil {
+			s.guard.ReleaseCampaign(ctx, workspaceID, campaignID)
+		}
 		return db.Campaign{}, "", fmt.Errorf("decrypt token: %w", err)
 	}
 	if err := adapter.SetStatus(ctx, token, account.ExternalAccountID, camp.ExternalCampaignID, status); err != nil {
-		return db.Campaign{}, "", fmt.Errorf("set status on %s: %w", account.Platform, err)
+		if held && s.guard != nil {
+			s.guard.ReleaseCampaign(ctx, workspaceID, campaignID)
+		}
+		return db.Campaign{}, "", fmt.Errorf("set status on %s: %w", integrations.PublicPlatform(account.Platform), err)
+	}
+	if status == StatusPaused && s.guard != nil && usesPrepaidWallet(account) {
+		s.guard.ReleaseCampaign(ctx, workspaceID, campaignID)
 	}
 
 	updated, err := s.queries.UpdateCampaignStatus(ctx, db.UpdateCampaignStatusParams{
@@ -519,7 +539,7 @@ func (s *CampaignService) SetCampaignStatus(ctx context.Context, workspaceID, ca
 	if err != nil {
 		return db.Campaign{}, "", fmt.Errorf("persist status: %w", err)
 	}
-	return updated, account.Platform, nil
+	return updated, integrations.PublicPlatform(account.Platform), nil
 }
 
 // PauseWorkspaceCampaigns hard-pauses every ACTIVE campaign in a workspace,
@@ -533,6 +553,11 @@ func (s *CampaignService) PauseWorkspaceCampaigns(ctx context.Context, workspace
 	paused := 0
 	for _, c := range rows {
 		if c.Status != StatusActive {
+			continue
+		}
+		// DV360 spend is billed by Google, so the prepaid guard must not pause
+		// it when the Pill4rs wallet is empty.
+		if acct, err := s.queries.GetAdAccountByID(ctx, c.AdAccountID); err == nil && !usesPrepaidWallet(acct) {
 			continue
 		}
 		if _, _, err := s.SetCampaignStatus(ctx, workspaceID, uuidFromPG(c.ID), StatusPaused); err != nil {
@@ -568,7 +593,7 @@ func (s *CampaignService) UpdateCampaignBudget(ctx context.Context, workspaceID,
 	}
 	adapter, ok := s.adapters[account.Platform]
 	if !ok {
-		return db.Campaign{}, "", ValidationError{fmt.Sprintf("%s is no longer a supported platform", account.Platform)}
+		return db.Campaign{}, "", ValidationError{fmt.Sprintf("%s is no longer a supported platform", integrations.PublicPlatform(account.Platform))}
 	}
 
 	if camp.Status != StatusDraft && camp.ExternalAdsetID.Valid {
@@ -577,7 +602,7 @@ func (s *CampaignService) UpdateCampaignBudget(ctx context.Context, workspaceID,
 			return db.Campaign{}, "", fmt.Errorf("decrypt token: %w", err)
 		}
 		if err := adapter.UpdateAdSetBudget(ctx, token, account.ExternalAccountID, camp.ExternalAdsetID.String, dailyBudget); err != nil {
-			return db.Campaign{}, "", fmt.Errorf("update budget on %s: %w", account.Platform, err)
+			return db.Campaign{}, "", fmt.Errorf("update budget on %s: %w", integrations.PublicPlatform(account.Platform), err)
 		}
 	}
 
@@ -588,7 +613,7 @@ func (s *CampaignService) UpdateCampaignBudget(ctx context.Context, workspaceID,
 	if err != nil {
 		return db.Campaign{}, "", fmt.Errorf("persist budget: %w", err)
 	}
-	return updated, account.Platform, nil
+	return updated, integrations.PublicPlatform(account.Platform), nil
 }
 
 // UpdateProvenance merges provenance overrides into a campaign's provenance JSON.
@@ -687,6 +712,22 @@ func specFromCampaign(camp db.Campaign, budget float64) integrations.CampaignSpe
 		spec.Format = spec.Creative.Format
 	}
 	return spec
+}
+
+// usesPrepaidWallet reports whether spend on a platform is funded from the
+// Pill4rs prepaid wallet. DV360 is billed directly by Google, so it is
+// track-only and must not be gated or hard-paused by wallet balance.
+func usesPrepaidWallet(a db.AdAccount) bool {
+	return a.Platform != "dv360" && a.BillingMode == "managed"
+}
+
+func anyPrepaidAccount(byID map[string]db.AdAccount, ids []string) bool {
+	for _, id := range ids {
+		if a, ok := byID[id]; ok && usesPrepaidWallet(a) {
+			return true
+		}
+	}
+	return false
 }
 
 func newPlaceholderID() string {
@@ -820,11 +861,11 @@ func (s *CampaignService) ForecastDelivery(ctx context.Context, workspaceID uuid
 
 	adapter, ok := s.adapters[account.Platform]
 	if !ok {
-		return nil, ValidationError{fmt.Sprintf("%s is not a supported platform", account.Platform)}
+		return nil, ValidationError{fmt.Sprintf("%s is not a supported platform", integrations.PublicPlatform(account.Platform))}
 	}
 	forecaster, ok := interface{}(adapter).(integrations.CampaignForecaster)
 	if !ok {
-		return nil, ValidationError{fmt.Sprintf("forecasting is not supported for %s", account.Platform)}
+		return nil, ValidationError{fmt.Sprintf("forecasting is not supported for %s", integrations.PublicPlatform(account.Platform))}
 	}
 
 	token, err := crypto.DecryptToken(account.AccessTokenEncrypted, s.encKey)

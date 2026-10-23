@@ -119,3 +119,35 @@ func (h *WalletHandler) TopUp(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, summary)
 }
+
+// Holds returns the active wallet holds (reserved campaign budget).
+func (h *WalletHandler) Holds(c echo.Context) error {
+	ws, err := uuid.Parse(workspaceIDOf(c))
+	if err != nil {
+		return badRequest(c, "invalid workspace id")
+	}
+	holds, err := h.wallet.ListActiveHolds(c.Request().Context(), ws)
+	if err != nil {
+		slog.Error("wallet holds failed", "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load holds"})
+	}
+	out := make([]map[string]interface{}, 0, len(holds))
+	for _, hold := range holds {
+		m := map[string]interface{}{
+			"id":              formatUUID(hold.ID),
+			"currency":        hold.Currency,
+			"amount_minor":    hold.AmountMinor,
+			"remaining_minor": hold.RemainingMinor,
+			"status":          hold.Status,
+			"created_at":      hold.CreatedAt.Time,
+		}
+		if hold.SourceType.Valid {
+			m["source_type"] = hold.SourceType.String
+		}
+		if hold.SourceID.Valid {
+			m["source_id"] = hold.SourceID.String
+		}
+		out = append(out, m)
+	}
+	return c.JSON(http.StatusOK, out)
+}

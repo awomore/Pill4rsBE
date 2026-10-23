@@ -243,3 +243,61 @@ func TestFetchInsights(t *testing.T) {
 		t.Errorf("metrics = %+v", r)
 	}
 }
+
+func TestCreateManagedAdvertiser(t *testing.T) {
+	var body map[string]any
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		_, _ = w.Write([]byte(`{"code":0,"data":{"advertiser_id":"adv9"}}`))
+	}))
+	defer srv.Close()
+
+	id, err := newTestClient(srv.URL).CreateManagedAdvertiser(context.Background(), "tok", "bc1",
+		"Client A", "usd", "America/New_York", 0, "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "adv9" {
+		t.Errorf("id = %q", id)
+	}
+	if path != "/open_api/v1.3/bc/advertiser/create/" {
+		t.Errorf("path = %q", path)
+	}
+	info, _ := body["advertiser_info"].(map[string]any)
+	if info["name"] != "Client A" || info["currency"] != "USD" || info["timezone"] != "America/New_York" {
+		t.Errorf("advertiser_info = %v", info)
+	}
+	if body["bc_id"] != "bc1" {
+		t.Errorf("bc_id = %v", body["bc_id"])
+	}
+}
+
+func TestSetAdvertiserBudget(t *testing.T) {
+	var body map[string]any
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		_, _ = w.Write([]byte(`{"code":0,"data":{}}`))
+	}))
+	defer srv.Close()
+
+	if err := newTestClient(srv.URL).SetAdvertiserBudget(context.Background(), "tok", "adv9", 123.45, ""); err != nil {
+		t.Fatal(err)
+	}
+	if path != "/open_api/v1.3/advertiser/update/" {
+		t.Errorf("path = %q", path)
+	}
+	if body["budget_update_type"] != "UPDATE" {
+		t.Errorf("body = %v", body)
+	}
+	budgets, _ := body["advertiser_budgets"].([]any)
+	b, _ := budgets[0].(map[string]any)
+	if b["budget"] != 123.45 || b["budget_mode"] != "BUDGET_MODE_TOTAL" {
+		t.Errorf("budget = %v", b)
+	}
+}

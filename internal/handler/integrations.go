@@ -9,9 +9,11 @@ import (
 	"github.com/awomore/Pill4rsBE/internal/config"
 	"github.com/awomore/Pill4rsBE/internal/crypto"
 	"github.com/awomore/Pill4rsBE/internal/db"
+	"github.com/awomore/Pill4rsBE/internal/integrations"
 	"github.com/awomore/Pill4rsBE/internal/integrations/google"
 	"github.com/awomore/Pill4rsBE/internal/integrations/meta"
 	"github.com/awomore/Pill4rsBE/internal/integrations/tiktok"
+	"github.com/awomore/Pill4rsBE/internal/service"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v4"
@@ -24,15 +26,18 @@ const (
 )
 
 type IntegrationsHandler struct {
-	queries *db.Queries
-	cfg     *config.Config
-	meta    *meta.Client
-	tiktok  *tiktok.Client
-	google  *google.Client
+	queries       *db.Queries
+	cfg           *config.Config
+	meta          *meta.Client
+	tiktok        *tiktok.Client
+	google        *google.Client
+	managedMeta   *service.ManagedMetaService
+	managedTikTok *service.ManagedTikTokService
+	managedGoogle *service.ManagedGoogleService
 }
 
-func NewIntegrationsHandler(queries *db.Queries, cfg *config.Config, metaClient *meta.Client, tiktokClient *tiktok.Client, googleClient *google.Client) *IntegrationsHandler {
-	return &IntegrationsHandler{queries: queries, cfg: cfg, meta: metaClient, tiktok: tiktokClient, google: googleClient}
+func NewIntegrationsHandler(queries *db.Queries, cfg *config.Config, metaClient *meta.Client, tiktokClient *tiktok.Client, googleClient *google.Client, managedMeta *service.ManagedMetaService, managedTikTok *service.ManagedTikTokService, managedGoogle *service.ManagedGoogleService) *IntegrationsHandler {
+	return &IntegrationsHandler{queries: queries, cfg: cfg, meta: metaClient, tiktok: tiktokClient, google: googleClient, managedMeta: managedMeta, managedTikTok: managedTikTok, managedGoogle: managedGoogle}
 }
 
 // MetaConnect generates a CSRF state, stores it in a short-lived HttpOnly
@@ -172,7 +177,7 @@ func (h *IntegrationsHandler) List(c echo.Context) error {
 	for _, a := range accounts {
 		item := map[string]interface{}{
 			"id":                  formatUUID(a.ID),
-			"platform":            a.Platform,
+			"platform":            integrations.PublicPlatform(a.Platform),
 			"external_account_id": a.ExternalAccountID,
 			"status":              a.Status,
 		}
@@ -326,7 +331,7 @@ func (h *IntegrationsHandler) AccountConfigure(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"id":       formatUUID(updated.ID),
-		"platform": updated.Platform,
+		"platform": integrations.PublicPlatform(updated.Platform),
 		"status":   updated.Status,
 		"page_id":  textOrEmpty(updated.PageID),
 		"pixel_id": textOrEmpty(updated.PixelID),
@@ -628,5 +633,276 @@ func (h *IntegrationsHandler) clearStateCookie(c echo.Context) {
 		SameSite: http.SameSiteLaxMode,
 		Path:     "/api/integrations/meta",
 		MaxAge:   -1,
+	})
+}
+
+type googleManagedAccountRequest struct {
+	Name         string `json:"name"`
+	CurrencyCode string `json:"currency_code"`
+	TimeZone     string `json:"time_zone"`
+}
+
+// GoogleManagedAccount creates a new Google Ads customer under the Pill4rs MCC
+// and stores it as a managed ad account funded by the prepaid wallet.
+func (h *IntegrationsHandler) GoogleManagedAccount(c echo.Context) error {
+	if h.cfg.GoogleClientID == "" || h.cfg.GoogleClientSecret == "" || h.cfg.GoogleAdsDeveloperToken == "" ||
+		h.cfg.GoogleAdsMCCRefreshToken == "" || h.cfg.GoogleAdsLoginCustomerID == "" {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "managed google ads accounts are not configured"})
+	}
+
+	wid, err := uuid.Parse(workspaceIDOf(c))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid workspace id"})
+	}
+
+	var req googleManagedAccountRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	name := strings.TrimSpace(req.Name)
+	currency := strings.ToUpper(strings.TrimSpace(req.CurrencyCode))
+	timeZone := strings.TrimSpace(req.TimeZone)
+	if name == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name is required"})
+	}
+	if currency != "USD" && currency != "NGN" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "currency_code must be USD or NGN for managed accounts"})
+	}
+	if timeZone == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "time_zone is required (e.g. America/New_York)"})
+	}
+
+	ctx := c.Request().Context()
+	customerID, err := h.google.CreateCustomerClient(ctx, h.cfg.GoogleAdsMCCRefreshToken,
+		h.cfg.GoogleAdsLoginCustomerID, name, currency, timeZone)
+	if err != nil {
+		slog.Error("google managed account creation failed", "error", err)
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to create google ads account"})
+	}
+
+	encrypted, err := crypto.EncryptToken(h.cfg.GoogleAdsMCCRefreshToken, h.cfg.TokenEncryptionKey)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to store credentials"})
+	}
+
+	row, err := h.queries.UpsertAdAccount(ctx, db.UpsertAdAccountParams{
+		WorkspaceID:          pgtype.UUID{Bytes: wid, Valid: true},
+		Platform:             "google",
+		ExternalAccountID:    customerID,
+		AccessTokenEncrypted: encrypted,
+		Name:                 textPg(name),
+	})
+	if err != nil {
+		slog.Error("google managed account save failed", "customer", customerID, "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to save google ads account"})
+	}
+
+	updated, err := h.queries.SetAdAccountBilling(ctx, db.SetAdAccountBillingParams{
+		ID:          row.ID,
+		BillingMode: "managed",
+		Payer:       "pill4rs",
+		Currency:    currency,
+	})
+	if err != nil {
+		slog.Error("google managed account billing setup failed", "account", customerID, "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to configure managed billing"})
+	}
+
+	proposed := false
+	if h.managedGoogle != nil {
+		if err := h.managedGoogle.SetSpendCapForAccount(ctx, wid, updated); err != nil {
+			slog.Warn("google managed account budget proposal failed", "account", customerID, "error", err)
+		} else {
+			proposed = true
+		}
+	}
+
+	return c.JSON(http.StatusCreated, map[string]any{
+		"id":                  formatUUID(updated.ID),
+		"platform":            "google",
+		"external_account_id": updated.ExternalAccountID,
+		"name":                textOrEmpty(updated.Name),
+		"billing_mode":        updated.BillingMode,
+		"payer":               updated.Payer,
+		"currency":            updated.Currency,
+		"spend_cap_proposed":  proposed,
+	})
+}
+
+type metaManagedAccountRequest struct {
+	Name       string `json:"name"`
+	Currency   string `json:"currency"`
+	TimezoneID int    `json:"timezone_id"`
+}
+
+// MetaManagedAccount creates a managed ad account under the Pill4rs Business
+// Manager and keeps a hard spend cap aligned with lifetime wallet top-ups.
+func (h *IntegrationsHandler) MetaManagedAccount(c echo.Context) error {
+	if h.cfg.MetaBusinessID == "" || h.cfg.MetaManagedAccessToken == "" {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "managed meta ad accounts are not configured"})
+	}
+	wid, err := uuid.Parse(workspaceIDOf(c))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid workspace id"})
+	}
+
+	var req metaManagedAccountRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	name := strings.TrimSpace(req.Name)
+	currency := strings.ToUpper(strings.TrimSpace(req.Currency))
+	if name == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name is required"})
+	}
+	if currency != "USD" && currency != "NGN" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "currency must be USD or NGN for managed accounts"})
+	}
+	if req.TimezoneID <= 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "timezone_id is required"})
+	}
+
+	ctx := c.Request().Context()
+	accountID, err := h.meta.CreateManagedAdAccount(ctx, h.cfg.MetaManagedAccessToken,
+		h.cfg.MetaBusinessID, name, currency, req.TimezoneID)
+	if err != nil {
+		slog.Error("meta managed account creation failed", "error", err)
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to create meta ad account"})
+	}
+
+	encrypted, err := crypto.EncryptToken(h.cfg.MetaManagedAccessToken, h.cfg.TokenEncryptionKey)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to store credentials"})
+	}
+	row, err := h.queries.UpsertAdAccount(ctx, db.UpsertAdAccountParams{
+		WorkspaceID:          pgtype.UUID{Bytes: wid, Valid: true},
+		Platform:             "meta",
+		ExternalAccountID:    accountID,
+		AccessTokenEncrypted: encrypted,
+		Name:                 textPg(name),
+	})
+	if err != nil {
+		slog.Error("meta managed account save failed", "account", accountID, "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to save meta ad account"})
+	}
+	updated, err := h.queries.SetAdAccountBilling(ctx, db.SetAdAccountBillingParams{
+		ID:          row.ID,
+		BillingMode: "managed",
+		Payer:       "pill4rs",
+		Currency:    currency,
+	})
+	if err != nil {
+		slog.Error("meta managed billing setup failed", "account", accountID, "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to configure managed billing"})
+	}
+
+	synced := false
+	if h.managedMeta != nil {
+		if err := h.managedMeta.SetSpendCapForAccount(ctx, wid, updated); err != nil {
+			slog.Warn("meta managed spend cap sync failed", "account", accountID, "error", err)
+		} else {
+			synced = true
+		}
+	}
+
+	return c.JSON(http.StatusCreated, map[string]any{
+		"id":                  formatUUID(updated.ID),
+		"platform":            "meta",
+		"external_account_id": updated.ExternalAccountID,
+		"name":                textOrEmpty(updated.Name),
+		"billing_mode":        updated.BillingMode,
+		"payer":               updated.Payer,
+		"currency":            updated.Currency,
+		"spend_cap_synced":    synced,
+	})
+}
+
+type tiktokManagedAccountRequest struct {
+	Name           string `json:"name"`
+	Currency       string `json:"currency"`
+	Timezone       string `json:"timezone"`
+	Industry       int    `json:"industry"`
+	RegisteredArea string `json:"registered_area"`
+	ContactEmail   string `json:"contact_email"`
+	ContactName    string `json:"contact_name"`
+	ContactNumber  string `json:"contact_number"`
+}
+
+// TikTokManagedAccount creates an advertiser under the Pill4rs Business Center
+// and sets an account-level budget from lifetime wallet top-ups.
+func (h *IntegrationsHandler) TikTokManagedAccount(c echo.Context) error {
+	if h.cfg.TikTokBusinessCenterID == "" || h.cfg.TikTokManagedAccessToken == "" {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "managed tiktok ad accounts are not configured"})
+	}
+	wid, err := uuid.Parse(workspaceIDOf(c))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid workspace id"})
+	}
+	var req tiktokManagedAccountRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	name := strings.TrimSpace(req.Name)
+	currency := strings.ToUpper(strings.TrimSpace(req.Currency))
+	timezone := strings.TrimSpace(req.Timezone)
+	if name == "" || timezone == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "name and timezone are required"})
+	}
+	if currency != "USD" && currency != "NGN" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "currency must be USD or NGN for managed accounts"})
+	}
+
+	ctx := c.Request().Context()
+	advertiserID, err := h.tiktok.CreateManagedAdvertiser(ctx, h.cfg.TikTokManagedAccessToken,
+		h.cfg.TikTokBusinessCenterID, name, currency, timezone, req.Industry, req.RegisteredArea,
+		req.ContactEmail, req.ContactName, req.ContactNumber)
+	if err != nil {
+		slog.Error("tiktok managed account creation failed", "error", err)
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to create tiktok ad account"})
+	}
+
+	encrypted, err := crypto.EncryptToken(h.cfg.TikTokManagedAccessToken, h.cfg.TokenEncryptionKey)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to store credentials"})
+	}
+	row, err := h.queries.UpsertAdAccount(ctx, db.UpsertAdAccountParams{
+		WorkspaceID:          pgtype.UUID{Bytes: wid, Valid: true},
+		Platform:             "tiktok",
+		ExternalAccountID:    advertiserID,
+		AccessTokenEncrypted: encrypted,
+		Name:                 textPg(name),
+	})
+	if err != nil {
+		slog.Error("tiktok managed account save failed", "account", advertiserID, "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to save tiktok ad account"})
+	}
+	updated, err := h.queries.SetAdAccountBilling(ctx, db.SetAdAccountBillingParams{
+		ID:          row.ID,
+		BillingMode: "managed",
+		Payer:       "pill4rs",
+		Currency:    currency,
+	})
+	if err != nil {
+		slog.Error("tiktok managed billing setup failed", "account", advertiserID, "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to configure managed billing"})
+	}
+
+	synced := false
+	if h.managedTikTok != nil {
+		if err := h.managedTikTok.SetBudgetForAccount(ctx, wid, updated); err != nil {
+			slog.Warn("tiktok managed budget sync failed", "account", advertiserID, "error", err)
+		} else {
+			synced = true
+		}
+	}
+	return c.JSON(http.StatusCreated, map[string]any{
+		"id":                  formatUUID(updated.ID),
+		"platform":            "tiktok",
+		"external_account_id": updated.ExternalAccountID,
+		"name":                textOrEmpty(updated.Name),
+		"billing_mode":        updated.BillingMode,
+		"payer":               updated.Payer,
+		"currency":            updated.Currency,
+		"budget_synced":       synced,
 	})
 }

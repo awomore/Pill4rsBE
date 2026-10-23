@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -30,8 +31,15 @@ func (h *SyncHandler) Trigger(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid workspace id"})
 	}
 
-	summary, err := h.sync.SyncWorkspace(c.Request().Context(), wid)
+	// Optional backfill window: ?since=YYYY-MM-DD&until=YYYY-MM-DD. Missing
+	// bounds default to the last 30 days.
+	summary, err := h.sync.SyncWorkspaceRange(c.Request().Context(), wid,
+		c.QueryParam("since"), c.QueryParam("until"))
 	if err != nil {
+		var ve service.ValidationError
+		if errors.As(err, &ve) {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": ve.Msg})
+		}
 		slog.Error("sync trigger failed", "workspace", workspaceID, "error", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "sync failed"})
 	}

@@ -28,6 +28,182 @@ type AdAccount struct {
 	SpendLimitMinor       pgtype.Int8
 }
 
+type ApiKey struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	AgencyID    pgtype.UUID
+	Name        string
+	Prefix      string
+	KeyHash     string
+	Scopes      []string
+	LastUsedAt  pgtype.Timestamptz
+	RevokedAt   pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
+type IdempotencyKey struct {
+	ID             pgtype.UUID
+	WorkspaceID    pgtype.UUID
+	Endpoint       string
+	Key            string
+	RequestHash    string
+	Status         string
+	ResponseStatus pgtype.Int4
+	ResponseBody   []byte
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type Agency struct {
+	ID          pgtype.UUID
+	OwnerUserID pgtype.UUID
+	Name        string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type AgencyMember struct {
+	ID        pgtype.UUID
+	AgencyID  pgtype.UUID
+	UserID    pgtype.UUID
+	Role      string
+	CreatedAt pgtype.Timestamptz
+}
+
+type AgencyMemberRow struct {
+	ID        pgtype.UUID
+	AgencyID  pgtype.UUID
+	UserID    pgtype.UUID
+	Role      string
+	CreatedAt pgtype.Timestamptz
+	Email     string
+}
+
+type GetAgencyTotalsRow struct {
+	TotalSpend       pgtype.Numeric
+	TotalImpressions int64
+	TotalClicks      int64
+	TotalConversions int64
+	AverageRoas      pgtype.Numeric
+	AverageCpc       pgtype.Numeric
+}
+
+type GetAgencyClientBreakdownRow struct {
+	WorkspaceID     pgtype.UUID
+	Name            string
+	Spend           pgtype.Numeric
+	Impressions     int64
+	Clicks          int64
+	Conversions     int64
+	Campaigns       int64
+	ActiveCampaigns int64
+}
+
+type GetAgencyWalletTotalsRow struct {
+	Currency       string
+	AvailableMinor int64
+	HeldMinor      int64
+}
+
+type GetAgencyCommissionTotalsRow struct {
+	Currency        string
+	BaseMinor       int64
+	CommissionMinor int64
+}
+
+type GetAgencyCampaignCountsRow struct {
+	TotalCampaigns  int64
+	ActiveCampaigns int64
+}
+
+type PlatformAdmin struct {
+	UserID    pgtype.UUID
+	GrantedBy pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+type PlatformAdminRow struct {
+	UserID    pgtype.UUID
+	GrantedBy pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+	Email     string
+}
+
+type AdminAuditLog struct {
+	ID          pgtype.UUID
+	AdminUserID pgtype.UUID
+	Action      string
+	TargetType  pgtype.Text
+	TargetID    pgtype.Text
+	Metadata    []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+type AdminAuditLogRow struct {
+	ID          pgtype.UUID
+	AdminUserID pgtype.UUID
+	Action      string
+	TargetType  pgtype.Text
+	TargetID    pgtype.Text
+	Metadata    []byte
+	CreatedAt   pgtype.Timestamptz
+	AdminEmail  string
+}
+
+type AdminOverviewRow struct {
+	Users           int64
+	Agencies        int64
+	Workspaces      int64
+	Campaigns       int64
+	ActiveCampaigns int64
+	AdAccounts      int64
+}
+
+type AdminWalletTotalRow struct {
+	Currency       string
+	AvailableMinor int64
+	HeldMinor      int64
+}
+
+type AdminAgencyRow struct {
+	ID         pgtype.UUID
+	Name       string
+	CreatedAt  pgtype.Timestamptz
+	OwnerEmail string
+	Clients    int64
+	Members    int64
+}
+
+type AdminUserRow struct {
+	ID              pgtype.UUID
+	Email           string
+	CreatedAt       pgtype.Timestamptz
+	Agencies        int64
+	OwnedWorkspaces int64
+}
+
+type SupportTicket struct {
+	ID              pgtype.UUID
+	WorkspaceID     pgtype.UUID
+	CreatedBy       pgtype.UUID
+	Subject         string
+	Status          string
+	Priority        string
+	AssignedAdminID pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type SupportMessage struct {
+	ID           pgtype.UUID
+	TicketID     pgtype.UUID
+	AuthorUserID pgtype.UUID
+	AuthorType   string
+	Body         string
+	Internal     bool
+	CreatedAt    pgtype.Timestamptz
+}
+
 type BillingProfile struct {
 	ID                   pgtype.UUID
 	WorkspaceID          pgtype.UUID
@@ -151,6 +327,7 @@ type ProviderEvent struct {
 type Session struct {
 	ID               pgtype.UUID
 	UserID           pgtype.UUID
+	WorkspaceID      pgtype.UUID
 	RefreshTokenHash string
 	ExpiresAt        pgtype.Timestamptz
 	CreatedAt        pgtype.Timestamptz
@@ -169,6 +346,27 @@ type Wallet struct {
 	Status      string
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
+}
+
+type WalletHold struct {
+	ID             pgtype.UUID
+	WalletID       pgtype.UUID
+	WorkspaceID    pgtype.UUID
+	Currency       string
+	AmountMinor    int64
+	RemainingMinor int64
+	Status         string
+	SourceType     pgtype.Text
+	SourceID       pgtype.Text
+	IdempotencyKey string
+	Version        int32
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type SumActiveWalletHoldsRow struct {
+	Currency  string
+	HeldMinor int64
 }
 
 type WalletBalance struct {
@@ -209,4 +407,6 @@ type Workspace struct {
 	SpendStateReason   pgtype.Text
 	CommissionRateBps  int32
 	ZernioProfileID    pgtype.Text
+	AgencyID           pgtype.UUID
+	ClientLabel        pgtype.Text
 }
